@@ -2,7 +2,7 @@
 
 ## 1. Product vision
 
-**Vulture: Lunar Mining Mission** is a single-player, top-down lunar mining survival game set in 2199. The player is an independent contractor operating a rugged **Vulture-class reusable cargo rocket** for the fictional aerospace company **Vulture Aerospace**.
+**Vulture: Lunar Mining Mission** is a single-player, top-down 2D lunar mining survival game set in 2199. The player explores a large connected crater map and operates a rugged **Vulture-class reusable cargo rocket** for the fictional aerospace company **Vulture Aerospace**.
 
 The visual language is inspired by modern reusable orbital launch systems: stainless-steel spacecraft, modular cargo operations, autonomous landing systems, mission-control telemetry, and aggressive launch countdowns. The game must use fictional names, logos, and visual assets rather than copying real company branding.
 
@@ -51,34 +51,32 @@ Lunar mining is restricted by the **Lunar Resource Authority**. Vulture Aerospac
 | Orbital cannon | Authority orbital cannon |
 | Medical objective | Adriana Station medicine contract |
 
-## 3. World generation
+## 3. Open-world crater generation
 
-- Grid size: `14 rows × 22 columns`.
-- Tile size: `44px`.
-- Each run generates a new crater layout from a seed.
-- Generation uses weighted terrain:
-  - `11%` crater walls.
-  - `17%` ore-bearing terrain.
-  - `72%` regolith.
-- At least `14` active ore veins must exist.
-- A `3×4` safe zone around `(2,2)` is reserved for the player, Rover Base, and launch zone.
-- The generator must validate that the player can reach the base, launch zone, and all required objectives.
-- If an empty tile remains after mining, a replacement vein can respawn after a configurable delay.
+- Each run generates a large connected crater map from a seed.
+- The world is rendered as a top-down 2D map with multiple walkable regions.
+- Terrain includes regolith fields, crater walls, ridges, tunnels, ore fields, rover roads, landing zones, and landmarks.
+- At least `14` active ore veins must exist across the map.
+- The Vulture Rover Base and Launch Zone must have a safe, walkable route between them.
+- Generation must validate that the player can reach the base, launch zone, and required objectives.
+- High-value ore should be placed farther from the base or near higher-risk terrain.
+- Empty or depleted ore locations may respawn after a configurable in-game delay.
+- Collision bounds, line-of-sight blockers, interactable objects, and enemy spawn regions must be generated with the map.
 
-### Tile types
+### World objects and landmarks
 
-| ID | Tile | Visual treatment | Behavior and value |
-|---:|---|---|---|
-| 0 | Regolith | Alternating dark slate | Walkable |
-| 1 | Crater wall | Raised metal rock and crater ring | Blocks player and sentinels |
-| 2 | Quartz | Gold glowing diamond | `$30B × drill level` |
-| 3 | Helium-3 | Cyan glowing diamond | `$80B × drill level` |
-| 4 | Dark matter | Magenta glowing diamond | `$180B × drill level` |
-| 5 | Vulture Rover Base | Blue rounded `BASE` pad | Repairs hull and reduces heat |
-| 6 | Vulture Launch Zone | Green rocket-pad markings | Launches cargo with `$60B` minimum |
-| 7 | Thermal vent | Orange animated fissure | Rapidly reduces heat |
-| 8 | Abandoned rover | Damaged Vulture equipment | Grants a temporary resource bonus |
-| 9 | Radiation pocket | Purple warning particles | Increases ore value and heat generation |
+| Object | Visual treatment | Behavior and value |
+|---|---|---|
+| Regolith | Dusty, uneven lunar terrain | Walkable |
+| Crater wall | Raised rock formations and crater rings | Blocks movement and line of sight |
+| Quartz vein | Gold glowing crystal cluster | `$30B × drill level` |
+| Helium-3 vent | Cyan glowing extraction point | `$80B × drill level` |
+| Dark matter deposit | Magenta anomalous formation | `$180B × drill level` |
+| Vulture Rover Base | Blue habitat and repair pad | Repairs hull and reduces heat |
+| Vulture Launch Zone | Green landing guides and tower lights | Launches cargo with `$60B` minimum |
+| Thermal vent | Orange animated fissure | Rapidly reduces heat |
+| Abandoned rover | Damaged Vulture equipment | Grants a temporary resource bonus |
+| Radiation pocket | Purple particles and warning markers | Increases ore value and heat generation |
 
 ## 4. Player character
 
@@ -105,7 +103,7 @@ The constructor trims and uppercases the callsign. A valid callsign contains a h
 
 Methods:
 
-- `move(dx, dy, grid)`: Clamp coordinates to map boundaries and reject walls.
+- `move(dx, dy, grid)`: Move across the top-down map using collision bounds and reject walls.
 - `mineOre(oreType)`: Add `base value × drill level`, increase heat by the configured amount, and update peak heat.
 - `launchVultureCargo()`: Deduct the `$40B` medicine cost, bank the remaining cargo value, clear cargo, increment drill and shipment progress, set `adrianaSafe`, and add cannon time.
 - `updateSuit(atBase)`: Cool and repair rapidly at base; cool gradually while exploring.
@@ -196,14 +194,15 @@ Every successful launch unlocks one upgrade choice:
 
 The first release should use a small, readable upgrade tree rather than a large inventory system. Upgrade values should be data-driven so difficulty can be tuned without changing gameplay code.
 
-## 7. Controls
+## 7. Controls and camera
 
 - `WASD` or arrow keys: Move.
-- `SPACE` or `E`: Mine an adjacent vein.
+- `SPACE` or `E`: Interact with a nearby vein, rover, console, or launch control.
 - `F`: Load and launch cargo at the Vulture Launch Zone.
 - `Q`: EMP shockwave.
 - `R`: Restart after victory or game over.
 - `ESC`: Pause.
+- The camera follows the Miner from a fixed top-down angle and can smoothly pan or zoom.
 
 ## 8. Interface and presentation
 
@@ -211,9 +210,9 @@ The first release should use a small, readable upgrade tree rather than a large 
 
 - Target viewport: `968×766`.
 - HUD: `88px`.
-- Game viewport: `616px`.
+- Game viewport: `616px`, rendering the top-down 2D world.
 - Status and controls bar: `62px`.
-- Responsive browser mode should scale the game while preserving the grid aspect ratio.
+- Responsive browser mode should scale the game while preserving map visibility and HUD legibility.
 
 ### HUD
 
@@ -241,6 +240,8 @@ Heat colors transition from cyan to yellow, orange, and crimson. Important warni
 - Green Vulture Launch Zone with reusable-rocket landing guides.
 - Vulture rocket with black, white, and metallic-silver materials.
 - Animated engine exhaust and landing lights.
+- Top-down Miner sprite with visible suit lights, backpack, tool, and dust trails.
+- Walkable launch complex with service towers, cargo containers, rover garages, floodlights, and safety barriers.
 - Sentinel drones with a distinct warning color.
 - EMP shockwave with expanding cyan rings.
 - Crimson orbital beam when the cannon timer expires.
@@ -298,7 +299,7 @@ The game should remain playable without the backend. If the API is unavailable, 
 Use:
 
 - TypeScript.
-- Phaser 3.
+- Phaser 3 for 2D rendering, tile maps, camera movement, collision, particles, and scene management.
 - Vite.
 - CSS for menus and responsive layout.
 - Vitest for gameplay-system tests.
@@ -308,7 +309,9 @@ Frontend responsibilities:
 
 - Rendering and animation.
 - Keyboard input.
-- Map generation and collision.
+- Top-down map generation and collision.
+- Camera follow, pan, and zoom.
+- Waypoint graphs for Sentinel AI.
 - Miner, ore, and Sentinel behavior.
 - Heat, hull, cargo, EMP, and timer systems.
 - Local save data.
@@ -337,6 +340,8 @@ frontend/
       systems/
       ui/
       config/
+      cameras/
+      world/
     api/
     storage/
   tests/
@@ -384,18 +389,19 @@ GitHub Pages is a good free alternative for the static frontend, but it does not
 
 ## 12. Development milestones
 
-### Milestone 1: Playable prototype
+### Milestone 1: Playable 2D prototype
 
-- Render the grid.
-- Move the Miner.
-- Generate walls and ore.
-- Mine ore.
+- Render a small top-down crater test sector.
+- Move the Miner around the map.
+- Add collision with terrain and structures.
+- Add one ore deposit and a basic interaction prompt.
 - Display heat, hull, and cargo.
 
 ### Milestone 2: Survival loop
 
 - Add base repair and cooling.
 - Add launch zone.
+- Add a walkable Vulture Launch Zone and Vulture-7 rocket.
 - Add cannon timer.
 - Add Tesla Sentinels.
 - Add collision damage.
