@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.agents/
+skills-lock.json
+**/node_modules/
+**/dist/
+**/target/
+**/test-results/
+**/playwright-report/
+**/coverage/
+**/.vscode/
+**/.github/
