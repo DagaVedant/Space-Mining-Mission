@@ -1,5 +1,120 @@
 # Vulture: Lunar Mining Mission
 
+## 0. Approved implementation scope
+
+This document is both the game design specification and the implementation plan.
+
+### Gamedev agent skills
+
+Use the router and skill catalog at
+<https://github.com/gamedev-skills/awesome-gamedev-agent-skills> throughout implementation.
+Select skills based on the current task and engine rather than copying them into unrelated
+workflows.
+
+Required skill groups for this project:
+
+- Phaser and 2D web-engine fundamentals
+- Top-down movement and collision
+- Procedural generation
+- Tile and world data
+- Game save systems
+- UI and accessibility
+- 2D animation and audio
+- Create-game-assets and art-direction workflow
+- Local storage and offline behavior
+- Web deployment and itch.io publishing
+
+The selected local skills are installed under `/.agents/skills/` for use during implementation:
+`router`, `phaser-core`, `phaser-arcade-physics`, `procedural-gen`, `create-game-assets`,
+`save-systems`, `game-ui-ux`, `audio-design`, `survival-crafting`, and `itch-publish`.
+
+When the skill repository provides more specific guidance for a task, follow that guidance
+before inventing a project convention. Engine implementation must remain compatible with the
+Phaser 3 version chosen for this repository.
+
+### Release target
+
+- Build a complete **offline-capable browser game** for desktop and responsive browser play.
+- Publish the static frontend to **Vercel** for development and **itch.io** as the primary player-facing release.
+- Use **Phaser 3 + TypeScript + Vite** for the game.
+- Use **Java 21 + Spring Boot** for all server-side code.
+- Include the backend from the start for:
+  - Health checks
+  - Daily crater seeds
+  - Validated run submissions
+  - Leaderboard reads
+- Use PostgreSQL in production and H2 for local development and tests.
+- Use Flyway for database migrations.
+- Keep the game playable if the API or network is unavailable.
+- Never claim that a run was submitted unless the backend acknowledges success.
+
+### Asset direction
+
+- Prefer original, fictional, flat-style vector or pixel assets.
+- Licensed web assets may be used when their licenses allow redistribution and their attribution requirements can be satisfied.
+- Record the source, author, license, and required attribution for every external asset under `frontend/public/assets/licenses/`.
+- Do not copy real aerospace branding or logos.
+- Do not use CSS gradients, Canvas gradients, gradient textures, or gradient-based visual effects.
+- Use flat fills, outlines, solid particles, and hard-edged silhouettes instead.
+
+### Repository implementation structure
+
+```text
+backend/
+  pom.xml
+  src/main/java/com/vulture/mining/
+    api/
+    model/
+    repository/
+    service/
+    config/
+  src/main/resources/application.yml
+  src/main/resources/db/migration/
+  src/test/java/com/vulture/mining/
+
+frontend/
+  package.json
+  vite.config.ts
+  tsconfig.json
+  src/
+    main.ts
+    style.css
+    types.ts
+    balance.ts
+    client.ts
+    localSave.ts
+    scenes/
+      BootScene.ts
+      MenuScene.ts
+      PlayScene.ts
+      PauseScene.ts
+      ResultScene.ts
+tests/
+  integration.test.ts
+  sentinels.test.ts
+  simulation.test.ts
+  smoke.spec.ts
+  world.test.ts
+    audio/
+    licenses/
+```
+
+Keep Phaser rendering and browser input separate from engine-independent gameplay modules.
+
+### Required configuration
+
+All gameplay balance values must be data-driven. This includes:
+
+- Ore values and heat costs
+- Heat thresholds and cooling rates
+- Hull, repair, and collision-invulnerability values
+- Cargo limits and medicine cost
+- EMP radius, duration, and cooldown
+- Tesla and Mech activation, movement, damage, and warning values
+- Cannon timer, launch bonus, and timer cap
+- Victory, defeat, and upgrade values
+- World size, ore count, respawn delay, and minimum safe spawn distances
+
 ## 1. Product vision
 
 **Vulture: Lunar Mining Mission** is a single-player, top-down 2D lunar mining survival game set in 2199. The player explores a large connected crater map and operates a rugged **Vulture-class reusable cargo rocket** for the fictional aerospace company **Vulture Aerospace**.
@@ -332,19 +447,18 @@ backend/
   src/test/
 
 frontend/
+  package.json
   src/
     main.ts
-    game/
-      scenes/
-      entities/
-      systems/
-      ui/
-      config/
-      cameras/
-      world/
-    api/
-    storage/
-  tests/
+    style.css
+    types.ts
+    balance.ts
+    client.ts
+    localSave.ts
+    scenes/
+tests/
+  *.test.ts
+  smoke.spec.ts
 ```
 
 ### API outline
@@ -441,4 +555,235 @@ GitHub Pages is a good free alternative for the static frontend, but it does not
 
 ## 14. Release recommendation
 
-Build the first release as an offline-capable browser game with local saves. Deploy the frontend to Vercel for development and publish the finished game on itch.io. Add the Java backend only for daily challenges and leaderboards after the core game is fun and stable.
+Build the complete first release as an offline-capable browser game with local saves. Deploy the frontend to Vercel for development and publish the finished game on itch.io. Include the Java backend from the start for health checks, daily crater seeds, validated run submissions, and leaderboards.
+
+## 15. Implementation plan
+
+### Phase 1: Foundation
+
+1. Initialize the Phaser 3, TypeScript, Vite, Vitest, ESLint, and Prettier frontend.
+2. Initialize the Java 21, Spring Boot, Maven, JPA, H2, PostgreSQL, Flyway, JUnit, and Mockito backend.
+3. Add root scripts for frontend tests, backend tests, and combined verification.
+4. Add GitHub Actions for linting, testing, migrations, and both production builds.
+5. Add environment templates and explicit frontend/API base URL configuration.
+
+Acceptance:
+
+- The frontend renders a 968x766 smoke scene.
+- `GET /api/health` returns a structured healthy response.
+- Clean frontend and backend installs and test commands succeed.
+
+### Phase 2: Pure gameplay simulation
+
+Implement and test engine-independent TypeScript modules in this order:
+
+1. Callsign normalization and validation.
+2. Cardinal movement with wall and boundary rejection.
+3. Ore mining, drill multiplication, cargo limits, depletion, and heat.
+4. Hull damage, invulnerability, repair, and clamping.
+5. Heat thresholds and cooling in exploration, base, and thermal-vent states.
+6. Launch validation, medicine deduction, savings, cannon bonus, shipment count, and upgrades.
+7. EMP activation, Manhattan radius, stun ticks, cooldown, and cooldown presentation.
+8. Menu, playing, pause, victory, game-over, and restart transitions.
+
+Canonical frontend contracts must include `MinerState`, `OreType`, `SentinelType`, `GameState`, `UpgradeId`, and `RunSummary`.
+
+Acceptance:
+
+- The same seed and input sequence produce the same simulation state.
+- Callsign, heat, hull, cargo, launch, EMP, and state edge cases have unit tests.
+- Pure modules contain no Phaser or browser globals.
+
+### Phase 3: Seeded crater world
+
+Implement deterministic tile and navigation generation with:
+
+- Multiple connected walkable crater regions
+- Crater walls and line-of-sight blockers
+- Rover roads, ridges, tunnels, ore fields, and landmarks
+- The Rover Base and Launch Zone
+- Thermal vents and radiation pockets
+- At least 14 active ore veins
+- Enemy spawn zones
+- Collision and interactable-object metadata
+
+Before accepting a map, validate:
+
+- Reachability from the player to base, launch zone, and objectives
+- A safe walkable route between base and launch zone
+- Ore placement and at least one active vein of each type
+- Enemy spawn distance and reachable routes
+- No structure-wall overlap or unreachable reserved tile
+- High-value ore is farther from base or in higher-risk terrain
+
+Acceptance:
+
+- 1,000 generated seeds pass reachability validation.
+- Depleted locations respawn according to configured delay.
+- Navigation and collision use the same tile data.
+
+### Phase 4: Rendering and interface
+
+Implement:
+
+- Fixed top-down camera with follow and constrained pan/zoom
+- WASD, arrow-key, interaction, EMP, launch, pause, and restart input
+- Blue Vulture base and green Launch Zone landmarks
+- Gold, cyan, and magenta ore visuals
+- A 88px HUD, 616px game viewport, and 62px status/control bar in the 968x766 reference layout
+- Responsive scaling without hiding the world or collapsing HUD information
+- Heat and Sentinel warnings using animation, text, and icons rather than hue alone
+
+Asset requirements:
+
+- Miner with suit lights, backpack, tool, and movement directions
+- Vulture-7 and launch animation
+- Base and repair states
+- Three ore types and depleted states
+- Thermal vent and radiation pocket
+- Abandoned rover
+- Tesla and Mech Sentinels
+- EMP shockwave and warning effects
+- Flat HUD and icon assets
+
+Acceptance:
+
+- No CSS or Canvas gradients appear in source or generated asset code.
+- Every warning remains understandable without color.
+- Reduced motion disables nonessential camera and particle effects.
+- Missing optional assets do not prevent startup.
+
+### Phase 5: Sentinel behavior
+
+Implement:
+
+- Tesla activation at 75% heat
+- Mech activation at 100% heat
+- Tesla movement, dominant-axis pursuit, and `10` hull damage
+- Mech arrival warning, slow pursuit, and `18` hull damage
+- Wall-aware graph or tile movement
+- 750ms player collision invulnerability
+- EMP stun for 35 ticks
+- Minimum-safe-distance and reachable-route spawn validation
+
+Acceptance:
+
+- Sentinels cannot spawn beside the player or inside walls.
+- Stunned Sentinels cannot move or deal damage.
+- Tesla and Mech behavior is deterministic and unit tested.
+- No sentinel spawn creates an unavoidable wall trap.
+
+### Phase 6: Progression and release loop
+
+Complete:
+
+- Base repair and cooling
+- Thermal-vent cooling
+- Ore respawn
+- Cargo loading and launch
+- Medicine shipment
+- Cannon-time bonus and 120-second cap
+- All seven upgrade choices
+- Victory after `$1T` savings and at least one medical shipment
+- Loss by hull or cannon expiration
+- Result, seed, and run-statistics screens
+
+Upgrade stacks must be defined by configuration and prevent unsupported duplicate stacking.
+
+Acceptance:
+
+- A test run can complete the victory conditions.
+- Hull and cannon loss end in the correct game-over state.
+- A launch cannot succeed below $60B cargo.
+- A successful launch applies the medicine cost and adds an upgrade choice.
+
+### Phase 7: API and persistence
+
+Implement in Java:
+
+- `GET /api/health`
+- `GET /api/daily-crater`
+- `GET /api/leaderboard?limit=20`
+- `POST /api/runs`
+
+The run-submission DTO must include:
+
+- Callsign
+- Seed
+- Duration
+- Final savings
+- Remaining cargo
+- Shipment count
+- Medicine delivery count
+- Peak heat
+- Hull
+- Completion status
+- Victory or loss reason
+- Selected upgrades
+
+Validation must reject malformed payloads and impossible combinations, including negative values, impossible shipment and medicine counts, unknown or overstacked upgrades, invalid callsigns, invalid seeds, and inconsistent victory/loss flags.
+
+Use structured problem-detail errors. Add Flyway migrations and integration tests using H2.
+
+Frontend persistence must include:
+
+- Versioned local save
+- Safe fallback for missing, corrupt, or old saves
+- Local best run
+- Current settings
+- Submission state
+- Retryable API failure state
+
+Acceptance:
+
+- API success, malformed input, impossible summary, and limit tests pass.
+- Offline play continues without a backend.
+- Submission failure is visible and is never represented as success.
+- Daily seed remains usable offline if cached for the current UTC day.
+
+### Phase 8: Audio, accessibility, and polish
+
+Add:
+
+- Low-volume suit and rover ambience
+- Ore-specific mining sounds
+- Heat beeps and Sentinel alerts
+- EMP discharge
+- Launch countdown and engine rumble
+- Victory and defeat stingers
+- Volume and mute controls
+- Keyboard-only play
+- Pause controls
+- Reduced-motion settings
+- Text alternatives for visual warnings
+
+Acceptance:
+
+- The complete loop can be played and paused with keyboard only.
+- No warning relies on color alone.
+- Audio can be muted and has bounded volume.
+- The target viewport remains legible in the reference layout.
+
+### Phase 9: Release verification
+
+Run:
+
+- Frontend unit and integration tests
+- Java JUnit and Spring integration tests
+- 1,000-seed world reachability tests
+- Browser smoke tests at desktop and narrow responsive sizes
+- Victory, defeat, collision, heat, EMP, and launch edge-case tests
+- Asset and license audit
+- Accessibility and keyboard-only audit
+- Frontend production build
+- Java production build and migration check
+
+Release gates:
+
+- The normal flow has no runtime or console errors.
+- The frontend uses no gradient rendering.
+- The backend has no untested migration.
+- Every external asset has a redistributable license record.
+- `frontend/dist/` is suitable for itch.io HTML5 upload.
+- Vercel is configured for the static frontend.
+- The Java API is deployed separately on a Java-compatible host.
