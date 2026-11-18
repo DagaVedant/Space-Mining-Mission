@@ -1,15 +1,61 @@
+# Environment files
 .env
 .env.*
 !.env.example
-.DS_Store
-*.log
-.agents/
-skills-lock.json
+**/.env
+**/.env.*
+!**/.env.example
+
+# Dependencies
+node_modules/
 **/node_modules/
+
+# Build and test output
+dist/
+dist-ssr/
+target/
 **/dist/
+**/dist-ssr/
 **/target/
+build/
+**/build/
+test-results/
+playwright-report/
+coverage/
 **/test-results/
 **/playwright-report/
 **/coverage/
-**/.vscode/
-**/.github/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Local overrides
+*.local
+.agents/
+skills-lock.json
+
+# IDE and editor files
+.idea/
+.vscode/
+.settings/
+.apt_generated
+.classpath
+.factorypath
+.project
+.springBeans
+.sts4-cache
+*.iws
+*.iml
+*.ipr
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
