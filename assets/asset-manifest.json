@@ -1,0 +1,64 @@
+{
+  "project": "Vulture: Lunar Mining Mission",
+  "artDirection": "Flat, hard-edged, top-down lunar industrial",
+  "allowsGradients": false,
+  "externalAssets": [],
+  "assets": [
+    {
+      "path": "sprites/miner.svg",
+      "role": "Player",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
+    },
+    {
+      "path": "sprites/quartz.svg",
+      "role": "Quartz ore",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
+    },
+    {
+      "path": "sprites/helium-3.svg",
+      "role": "Helium-3 ore",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
+    },
+    {
+      "path": "sprites/dark-matter.svg",
+      "role": "Dark matter ore",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
+    },
+    {
+      "path": "sprites/base.svg",
+      "role": "Vulture Rover Base",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
+    },
+    {
+      "path": "sprites/launch-zone.svg",
+      "role": "Vulture Launch Zone",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
+    },
+    {
+      "path": "sprites/tesla-sentinel.svg",
+      "role": "Tesla-class Sentinel",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
+    },
+    {
+      "path": "sprites/mech-sentinel.svg",
+      "role": "Mech Sentinel",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
+    }
+  ]
+}
