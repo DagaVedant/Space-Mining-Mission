@@ -65,13 +65,16 @@ export class PlayScene extends Phaser.Scene {
   private sentinelSprites = new Map<SentinelState, Phaser.GameObjects.Image>();
   private sentinelGlows = new Map<SentinelState, Phaser.GameObjects.Arc>();
   private sentinelWarnings = new Map<SentinelState, Phaser.GameObjects.Text>();
+  private sentinelShadows = new Map<SentinelState, Phaser.GameObjects.Ellipse>();
 
   private oreSprites = new Map<string, Phaser.GameObjects.Image>();
   private oreGlows = new Map<string, Phaser.GameObjects.Arc>();
+  private oreShadows = new Map<string, Phaser.GameObjects.Ellipse>();
 
   private dustEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
   private rocketSprite?: Phaser.GameObjects.Image;
   private rocketBaseY = 0;
+  private playerShadow!: Phaser.GameObjects.Ellipse;
 
   private reducedMotion = false;
 
@@ -100,8 +103,10 @@ export class PlayScene extends Phaser.Scene {
     this.sentinelSprites.clear();
     this.sentinelGlows.clear();
     this.sentinelWarnings.clear();
+    this.sentinelShadows.clear();
     this.oreSprites.clear();
     this.oreGlows.clear();
+    this.oreShadows.clear();
     this.reducedMotion = loadSave().settings.reducedMotion;
   }
 
@@ -191,15 +196,32 @@ export class PlayScene extends Phaser.Scene {
     return obj;
   }
 
+  // Contact shadows are positioned at the sprite's feet (y + drop), not its center,
+  // so moving entities must apply the same `drop` when repositioning their shadow.
+  private addShadow(x: number, y: number, rx = 10, ry = 5, drop = 9): Phaser.GameObjects.Ellipse {
+    const shadow = this.add.ellipse(x, y + drop, rx * 2, ry * 2, 0x060809, 0.4);
+    this.wl(shadow);
+    return shadow;
+  }
+
   private drawWorld(): void {
     const graphics = this.add.graphics();
     this.wl(graphics);
 
+    // Light direction convention: single source, upper-left ~45deg.
+    // Lit edges (top/left) get a lightened tint, shadowed edges (bottom/right)
+    // get a darkened tint, applied consistently across all terrain and sprites.
     const floorA = 0x242c32;
     const floorB = 0x272f36;
+    const floorPebbleLit = 0x3c474f;
+    const floorPebbleShadow = 0x1b2227;
+    const craterRim = 0x3a444c;
+    const craterShadow = 0x1a2024;
     const wallBase = 0x3c4a54;
     const wallTop = 0x57666f;
+    const wallLeftLit = 0x4c5c67;
     const wallShadow = 0x283137;
+    const wallRightShadow = 0x323e47;
 
     for (let y = 0; y < this.world.height; y += 1) {
       for (let x = 0; x < this.world.width; x += 1) {
@@ -211,6 +233,10 @@ export class PlayScene extends Phaser.Scene {
           graphics.fillRect(px, py, WORLD_TILE, WORLD_TILE);
           graphics.fillStyle(wallTop, 1);
           graphics.fillRect(px, py, WORLD_TILE, 7);
+          graphics.fillStyle(wallLeftLit, 1);
+          graphics.fillRect(px, py, 3, WORLD_TILE);
+          graphics.fillStyle(wallRightShadow, 1);
+          graphics.fillRect(px + WORLD_TILE - 3, py, 3, WORLD_TILE);
           graphics.fillStyle(wallShadow, 1);
           graphics.fillRect(px, py + WORLD_TILE - 4, WORLD_TILE, 4);
         } else {
@@ -218,28 +244,40 @@ export class PlayScene extends Phaser.Scene {
           graphics.fillStyle(tone, 1);
           graphics.fillRect(px, py, WORLD_TILE, WORLD_TILE);
           if ((x + y * 7) % 11 === 0) {
-            graphics.fillStyle(0x323c43, 1);
-            graphics.fillRect(px + 6, py + 7, 2, 2);
-            graphics.fillRect(px + 21, py + 19, 2, 2);
+            graphics.fillStyle(floorPebbleLit, 1);
+            graphics.fillRect(px + 6, py + 6, 2, 2);
+            graphics.fillStyle(floorPebbleShadow, 1);
+            graphics.fillRect(px + 7, py + 7, 2, 2);
+            graphics.fillStyle(floorPebbleLit, 1);
+            graphics.fillRect(px + 21, py + 18, 2, 2);
+            graphics.fillStyle(floorPebbleShadow, 1);
+            graphics.fillRect(px + 22, py + 19, 2, 2);
+          }
+          if ((x * 13 + y * 29) % 40 === 0) {
+            graphics.fillStyle(craterShadow, 1);
+            graphics.fillCircle(px + 16, py + 17, 7);
+            graphics.fillStyle(craterRim, 1);
+            graphics.fillCircle(px + 15, py + 15, 6);
+            graphics.fillStyle(tone, 1);
+            graphics.fillCircle(px + 15, py + 15, 4);
           }
         }
       }
     }
 
-    const base = this.add.image(
-      (this.world.base.x + 0.5) * WORLD_TILE,
-      (this.world.base.y + 0.5) * WORLD_TILE,
-      'base',
-    );
+    const baseX = (this.world.base.x + 0.5) * WORLD_TILE;
+    const baseY = (this.world.base.y + 0.5) * WORLD_TILE;
+    this.addShadow(baseX, baseY, 15, 8);
+    const base = this.add.image(baseX, baseY, 'base');
     this.wl(base);
 
-    const launch = this.add.image(
-      (this.world.launchZone.x + 0.5) * WORLD_TILE,
-      (this.world.launchZone.y + 0.5) * WORLD_TILE,
-      'launchZone',
-    );
+    const launchX = (this.world.launchZone.x + 0.5) * WORLD_TILE;
+    const launchY = (this.world.launchZone.y + 0.5) * WORLD_TILE;
+    this.addShadow(launchX, launchY, 15, 8);
+    const launch = this.add.image(launchX, launchY, 'launchZone');
     this.wl(launch);
 
+    this.addShadow(launch.x, launch.y, 7, 4);
     this.rocketSprite = this.add
       .image(launch.x, launch.y - 4, 'rocket')
       .setOrigin(0.5, 1)
@@ -248,6 +286,7 @@ export class PlayScene extends Phaser.Scene {
     this.wl(this.rocketSprite);
 
     for (const vent of this.world.thermalVents) {
+      this.addShadow((vent.x + 0.5) * WORLD_TILE, (vent.y + 0.5) * WORLD_TILE, 9, 5);
       const img = this.add.image((vent.x + 0.5) * WORLD_TILE, (vent.y + 0.5) * WORLD_TILE, 'thermalVent');
       this.wl(img);
       if (!this.reducedMotion) {
@@ -265,6 +304,7 @@ export class PlayScene extends Phaser.Scene {
     }
 
     for (const pocket of this.world.radiationPockets) {
+      this.addShadow((pocket.x + 0.5) * WORLD_TILE, (pocket.y + 0.5) * WORLD_TILE, 9, 5);
       const img = this.add.image(
         (pocket.x + 0.5) * WORLD_TILE,
         (pocket.y + 0.5) * WORLD_TILE,
@@ -285,11 +325,13 @@ export class PlayScene extends Phaser.Scene {
     const cx = (ore.x + 0.5) * WORLD_TILE;
     const cy = (ore.y + 0.5) * WORLD_TILE;
 
+    const shadow = this.addShadow(cx, cy, 8, 4);
     const glow = this.add.circle(cx, cy, 12, ORE_GLOW[ore.type], 0.16);
     this.wl(glow);
     const sprite = this.add.image(cx, cy, ORE_TEXTURE[ore.type]);
     this.wl(sprite);
 
+    this.oreShadows.set(ore.id, shadow);
     this.oreGlows.set(ore.id, glow);
     this.oreSprites.set(ore.id, sprite);
 
@@ -316,6 +358,7 @@ export class PlayScene extends Phaser.Scene {
   private createPlayer(): void {
     const px = (this.miner.x + 0.5) * WORLD_TILE;
     const py = (this.miner.y + 0.5) * WORLD_TILE;
+    this.playerShadow = this.addShadow(px, py, 8, 4);
     this.player = this.add.image(px, py, 'miner').setDepth(10);
     this.wl(this.player);
 
@@ -533,6 +576,7 @@ export class PlayScene extends Phaser.Scene {
     this.miner.x = next.x;
     this.miner.y = next.y;
     this.player.setPosition((this.miner.x + 0.5) * WORLD_TILE, (this.miner.y + 0.5) * WORLD_TILE);
+    this.playerShadow.setPosition((this.miner.x + 0.5) * WORLD_TILE, (this.miner.y + 0.5) * WORLD_TILE + 9);
 
     if (moved) {
       this.dustEmitter?.start();
@@ -631,6 +675,9 @@ export class PlayScene extends Phaser.Scene {
       const sentinel = createSentinel(type, spawn.x, spawn.y);
       this.sentinels.push(sentinel);
 
+      const shadow = this.addShadow((spawn.x + 0.5) * WORLD_TILE, (spawn.y + 0.5) * WORLD_TILE, 8, 4);
+      this.sentinelShadows.set(sentinel, shadow);
+
       const sprite = this.add
         .image((spawn.x + 0.5) * WORLD_TILE, (spawn.y + 0.5) * WORLD_TILE, type === 'TESLA' ? 'teslaSentinel' : 'mechSentinel')
         .setDepth(8);
@@ -678,9 +725,11 @@ export class PlayScene extends Phaser.Scene {
         this.sentinelSprites.get(sentinel)?.destroy();
         this.sentinelGlows.get(sentinel)?.destroy();
         this.sentinelWarnings.get(sentinel)?.destroy();
+        this.sentinelShadows.get(sentinel)?.destroy();
         this.sentinelSprites.delete(sentinel);
         this.sentinelGlows.delete(sentinel);
         this.sentinelWarnings.delete(sentinel);
+        this.sentinelShadows.delete(sentinel);
         this.sentinels = this.sentinels.filter((entry) => entry !== sentinel);
       }
     }
@@ -728,6 +777,7 @@ export class PlayScene extends Phaser.Scene {
         }
         this.sentinelGlows.get(sentinel)?.setPosition(nx, ny);
         this.sentinelWarnings.get(sentinel)?.setPosition(nx, ny - 24);
+        this.sentinelShadows.get(sentinel)?.setPosition(nx, ny + 9);
       }
 
       const sprite = this.sentinelSprites.get(sentinel);
@@ -766,6 +816,7 @@ export class PlayScene extends Phaser.Scene {
 
       const sprite = this.oreSprites.get(ore.id);
       const glow = this.oreGlows.get(ore.id);
+      const shadow = this.oreShadows.get(ore.id);
       const targets = [sprite, glow].filter(Boolean) as Phaser.GameObjects.GameObject[];
       if (targets.length > 0) {
         this.tweens.add({
@@ -779,8 +830,12 @@ export class PlayScene extends Phaser.Scene {
           },
         });
       }
+      if (shadow) {
+        this.tweens.add({ targets: shadow, alpha: 0, duration: 200, onComplete: () => shadow.destroy() });
+      }
       this.oreSprites.delete(ore.id);
       this.oreGlows.delete(ore.id);
+      this.oreShadows.delete(ore.id);
       this.updateHud();
     }
   }
