@@ -59,6 +59,27 @@
       "source": "Original",
       "license": "Project",
       "technicalChecksPassed": true
+    },
+    {
+      "path": "sprites/rocket.svg",
+      "role": "Cargo rocket",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
+    },
+    {
+      "path": "sprites/thermal-vent.svg",
+      "role": "Thermal vent",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
+    },
+    {
+      "path": "sprites/radiation-pocket.svg",
+      "role": "Radiation pocket",
+      "source": "Original",
+      "license": "Project",
+      "technicalChecksPassed": true
     }
   ]
 }
