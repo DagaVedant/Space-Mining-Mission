@@ -50,12 +50,12 @@ Phaser 3 version chosen for this repository.
 
 ### Asset direction
 
-- Prefer original, fictional, flat-style vector or pixel assets.
+- Prefer original, fictional assets: flat vector for terrain/UI, stylized-3D bitmap sprites where noted in the asset manifest.
 - Licensed web assets may be used when their licenses allow redistribution and their attribution requirements can be satisfied.
 - Record the source, author, license, and required attribution for every external asset under `frontend/public/assets/licenses/`.
 - Do not copy real aerospace branding or logos.
-- Do not use CSS gradients, Canvas gradients, gradient textures, or gradient-based visual effects.
-- Use flat fills, outlines, solid particles, and hard-edged silhouettes instead.
+- Procedural and code-drawn rendering uses flat fills, outlines, solid particles, and hard-edged silhouettes.
+- Pre-rendered sprite bitmaps may contain shading.
 
 ### Repository implementation structure
 
@@ -781,7 +781,7 @@ Run:
 Release gates:
 
 - The normal flow has no runtime or console errors.
-- The frontend uses no gradient rendering.
+- The frontend code uses no gradient rendering (shading inside sprite bitmaps is allowed).
 - The backend has no untested migration.
 - Every external asset has a redistributable license record.
 - `frontend/dist/` is suitable for itch.io HTML5 upload.

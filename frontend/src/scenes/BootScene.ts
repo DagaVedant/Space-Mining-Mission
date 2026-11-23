@@ -15,17 +15,17 @@ export class BootScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    this.load.svg('miner', 'sprites/miner.svg');
-    this.load.svg('quartz', 'sprites/quartz.svg');
-    this.load.svg('helium3', 'sprites/helium-3.svg');
-    this.load.svg('darkMatter', 'sprites/dark-matter.svg');
+    this.load.image('miner', 'sprites/miner.png');
+    this.load.image('quartz', 'sprites/quartz.png');
+    this.load.image('helium3', 'sprites/helium-3.png');
+    this.load.image('darkMatter', 'sprites/dark-matter.png');
     this.load.svg('base', 'sprites/base.svg');
     this.load.svg('launchZone', 'sprites/launch-zone.svg');
     this.load.svg('teslaSentinel', 'sprites/tesla-sentinel.svg');
     this.load.svg('mechSentinel', 'sprites/mech-sentinel.svg');
     this.load.svg('thermalVent', 'sprites/thermal-vent.svg');
     this.load.svg('radiationPocket', 'sprites/radiation-pocket.svg');
-    this.load.svg('rocket', 'sprites/rocket.svg', { width: 24, height: 40 });
+    this.load.image('rocket', 'sprites/rocket.png');
   }
 
   create(): void {

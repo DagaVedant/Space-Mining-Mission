@@ -1,35 +1,34 @@
 {
   "project": "Vulture: Lunar Mining Mission",
-  "artDirection": "Flat, hard-edged, top-down lunar industrial",
-  "allowsGradients": false,
+  "artDirection": "Flat procedural terrain/UI; stylized-3D bitmap sprites for the player, ore and rocket (remaining sprites still flat SVG)",
   "externalAssets": [],
   "assets": [
     {
-      "path": "sprites/miner.svg",
+      "path": "sprites/miner.png",
       "role": "Player",
-      "source": "Original",
-      "license": "Project",
+      "source": "AI-generated (Canva, background removed locally)",
+      "license": "Generated with Canva; Canva content license terms apply",
       "technicalChecksPassed": true
     },
     {
-      "path": "sprites/quartz.svg",
+      "path": "sprites/quartz.png",
       "role": "Quartz ore",
-      "source": "Original",
-      "license": "Project",
+      "source": "AI-generated (Canva, background removed locally)",
+      "license": "Generated with Canva; Canva content license terms apply",
       "technicalChecksPassed": true
     },
     {
-      "path": "sprites/helium-3.svg",
+      "path": "sprites/helium-3.png",
       "role": "Helium-3 ore",
-      "source": "Original",
-      "license": "Project",
+      "source": "AI-generated (Canva, background removed locally)",
+      "license": "Generated with Canva; Canva content license terms apply",
       "technicalChecksPassed": true
     },
     {
-      "path": "sprites/dark-matter.svg",
+      "path": "sprites/dark-matter.png",
       "role": "Dark matter ore",
-      "source": "Original",
-      "license": "Project",
+      "source": "AI-generated (Canva, background removed locally)",
+      "license": "Generated with Canva; Canva content license terms apply",
       "technicalChecksPassed": true
     },
     {
@@ -61,10 +60,10 @@
       "technicalChecksPassed": true
     },
     {
-      "path": "sprites/rocket.svg",
+      "path": "sprites/rocket.png",
       "role": "Cargo rocket",
-      "source": "Original",
-      "license": "Project",
+      "source": "AI-generated (Canva, background removed locally)",
+      "license": "Generated with Canva; Canva content license terms apply",
       "technicalChecksPassed": true
     },
     {
@@ -81,5 +80,7 @@
       "license": "Project",
       "technicalChecksPassed": true
     }
-  ]
+  ],
+  "allowsGradientsInSprites": true,
+  "allowsGradientsInProceduralRendering": false
 }

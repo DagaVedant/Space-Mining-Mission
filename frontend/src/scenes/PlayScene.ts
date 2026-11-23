@@ -280,6 +280,7 @@ export class PlayScene extends Phaser.Scene {
     this.addShadow(launch.x, launch.y, 7, 4);
     this.rocketSprite = this.add
       .image(launch.x, launch.y - 4, 'rocket')
+      .setDisplaySize(24, 40)
       .setOrigin(0.5, 1)
       .setDepth(5);
     this.rocketBaseY = this.rocketSprite.y;
@@ -328,7 +329,7 @@ export class PlayScene extends Phaser.Scene {
     const shadow = this.addShadow(cx, cy, 8, 4);
     const glow = this.add.circle(cx, cy, 12, ORE_GLOW[ore.type], 0.16);
     this.wl(glow);
-    const sprite = this.add.image(cx, cy, ORE_TEXTURE[ore.type]);
+    const sprite = this.add.image(cx, cy, ORE_TEXTURE[ore.type]).setDisplaySize(30, 30);
     this.wl(sprite);
 
     this.oreShadows.set(ore.id, shadow);
@@ -359,7 +360,7 @@ export class PlayScene extends Phaser.Scene {
     const px = (this.miner.x + 0.5) * WORLD_TILE;
     const py = (this.miner.y + 0.5) * WORLD_TILE;
     this.playerShadow = this.addShadow(px, py, 8, 4);
-    this.player = this.add.image(px, py, 'miner').setDepth(10);
+    this.player = this.add.image(px, py, 'miner').setDisplaySize(32, 32).setDepth(10);
     this.wl(this.player);
 
     if (!this.reducedMotion) {
