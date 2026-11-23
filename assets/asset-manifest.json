@@ -39,10 +39,10 @@
       "technicalChecksPassed": true
     },
     {
-      "path": "sprites/launch-zone.svg",
+      "path": "sprites/launch-zone.png",
       "role": "Vulture Launch Zone",
-      "source": "Original",
-      "license": "Project",
+      "source": "AI-generated (Canva, background removed locally)",
+      "license": "Generated with Canva; Canva content license terms apply",
       "technicalChecksPassed": true
     },
     {

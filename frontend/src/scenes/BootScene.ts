@@ -20,7 +20,7 @@ export class BootScene extends Phaser.Scene {
     this.load.image('helium3', 'sprites/helium-3.png');
     this.load.image('darkMatter', 'sprites/dark-matter.png');
     this.load.image('base', 'sprites/base.png');
-    this.load.svg('launchZone', 'sprites/launch-zone.svg');
+    this.load.image('launchZone', 'sprites/launch-zone.png');
     this.load.svg('teslaSentinel', 'sprites/tesla-sentinel.svg');
     this.load.svg('mechSentinel', 'sprites/mech-sentinel.svg');
     this.load.svg('thermalVent', 'sprites/thermal-vent.svg');
