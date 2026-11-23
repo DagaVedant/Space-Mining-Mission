@@ -268,7 +268,7 @@ export class PlayScene extends Phaser.Scene {
     const baseX = (this.world.base.x + 0.5) * WORLD_TILE;
     const baseY = (this.world.base.y + 0.5) * WORLD_TILE;
     this.addShadow(baseX, baseY, 15, 8);
-    const base = this.add.image(baseX, baseY, 'base');
+    const base = this.add.image(baseX, baseY, 'base').setDisplaySize(32, 32);
     this.wl(base);
 
     const launchX = (this.world.launchZone.x + 0.5) * WORLD_TILE;

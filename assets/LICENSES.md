@@ -1,8 +1,8 @@
 # Vulture Asset Licenses
 
 - Rights holder: Project repository contributors
-- Original SVG assets (base, launch zone, sentinels, hazards): project license terms apply
-- Generated AI assets: miner, quartz, helium-3, dark-matter and rocket PNGs in `assets/sprites/`,
+- Original SVG assets (launch zone, sentinels, hazards): project license terms apply
+- Generated AI assets: miner, quartz, helium-3, dark-matter, base and rocket PNGs in `assets/sprites/`,
   generated with Canva's image generator (background removed locally). Canva's content license
   terms apply; confirm they suit your distribution before a commercial release.
 - External assets: None

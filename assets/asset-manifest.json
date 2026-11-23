@@ -32,10 +32,10 @@
       "technicalChecksPassed": true
     },
     {
-      "path": "sprites/base.svg",
+      "path": "sprites/base.png",
       "role": "Vulture Rover Base",
-      "source": "Original",
-      "license": "Project",
+      "source": "AI-generated (Canva, background removed locally)",
+      "license": "Generated with Canva; Canva content license terms apply",
       "technicalChecksPassed": true
     },
     {
