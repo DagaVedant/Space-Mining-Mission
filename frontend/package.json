@@ -1,5 +1,5 @@
 {
-  "name": "frontend",
+  "name": "rockbreaker",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -7,16 +7,14 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run --root .. tests/integration.test.ts tests/sentinels.test.ts tests/simulation.test.ts tests/world.test.ts",
+    "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint src ../tests",
-    "format": "prettier --write src ../tests index.html",
-    "check": "npm run lint && npm run test && npm run build",
-    "test:e2e": "npm run build && playwright test"
+    "lint": "eslint src tests",
+    "format": "prettier --write src tests index.html",
+    "check": "npm run lint && npm run test && npm run build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.65.1",
     "eslint": "^10.15.0",
     "prettier": "^3.10.1",
     "typescript": "~5.9.3",
