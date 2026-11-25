@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { fillDisc, strokeArc, strokeRing } from '../draw';
 import { sfx } from '../audio';
 import { AST_R, VARIANTS, type Sz } from '../art';
 import {
@@ -379,9 +380,7 @@ export class PlayScene extends Phaser.Scene {
     sz.lineStyle(3, 0xe8832a, 0.35);
     const segs = 60;
     for (let i = 0; i < segs; i += 2) {
-      sz.beginPath();
-      sz.arc(this.cx, this.cy, SAFE_R, (i / segs) * Math.PI * 2, ((i + 1) / segs) * Math.PI * 2);
-      sz.strokePath();
+      strokeArc(sz, this.cx, this.cy, SAFE_R, (i / segs) * Math.PI * 2, (Math.PI * 2) / segs);
     }
     this.wellGfx = this.add.graphics().setDepth(-5);
     this.planetGfx = this.add.graphics().setDepth(-4);
@@ -536,9 +535,9 @@ export class PlayScene extends Phaser.Scene {
         const texture = `planet_${Math.floor(Math.random() * 3)}`;
         this.add.image(x, y, texture).setScale((radius * 2) / 256).setDepth(0);
         this.planetGfx.lineStyle(2, 0x86a9c9, 0.15);
-        this.planetGfx.strokeCircle(x, y, PLANET_GRAVITY_R);
+        strokeRing(this.planetGfx, x, y, PLANET_GRAVITY_R);
         this.planetGfx.lineStyle(2, 0x86a9c9, 0.1);
-        this.planetGfx.strokeCircle(x, y, radius + 80);
+        strokeRing(this.planetGfx, x, y, radius + 80);
         break;
       }
     }
@@ -1765,7 +1764,7 @@ export class PlayScene extends Phaser.Scene {
       }
       if (enraged && b.ringCd > 0 && b.ringCd < 0.9) {
         this.threatGfx.lineStyle(3, 0xffa43a, 0.6);
-        this.threatGfx.strokeCircle(b.x, b.y, 240);
+        strokeRing(this.threatGfx, b.x, b.y, 240);
       }
       if (b.fireCd <= 0) {
         b.fireCd = enraged ? 1.3 : 1.9;
@@ -1906,22 +1905,13 @@ export class PlayScene extends Phaser.Scene {
   private updateWells(dt: number): void {
     const g = this.wellGfx;
     g.clear();
+    const view = this.cameras.main.worldView;
+    const reach = WELL_R + 60;
     for (const w of this.wells) {
-      // visuals
-      for (let i = 0; i < 4; i++) {
-        const r = WELL_R * (0.25 + i * 0.25);
-        g.lineStyle(2, 0xb35cf0, 0.12 + i * 0.03);
-        for (let s = 0; s < 8; s++) {
-          const a0 = this.t * (0.6 - i * 0.12) + (s / 8) * Math.PI * 2;
-          g.beginPath();
-          g.arc(w.x, w.y, r, a0, a0 + 0.45);
-          g.strokePath();
-        }
+      // visuals, skipped for wells nowhere near the screen (their pull below still applies)
+      if (w.x > view.x - reach && w.x < view.right + reach && w.y > view.y - reach && w.y < view.bottom + reach) {
+        this.drawWell(w.x, w.y);
       }
-      g.fillStyle(0x050407, 1);
-      g.fillCircle(w.x, w.y, 34);
-      g.lineStyle(3, 0xb35cf0, 0.9);
-      g.strokeCircle(w.x, w.y, 34);
       // physics
       const pull = (obj: Spr, k: number): void => {
         const dx = w.x - obj.x;
@@ -1943,6 +1933,21 @@ export class PlayScene extends Phaser.Scene {
       for (const d of this.drones.getChildren() as Drone[]) pull(d, 0.35);
     }
     this.updatePlanets(dt);
+  }
+
+  private drawWell(x: number, y: number): void {
+    const g = this.wellGfx;
+    for (let i = 0; i < 4; i++) {
+      const r = WELL_R * (0.25 + i * 0.25);
+      g.lineStyle(2, 0xb35cf0, 0.12 + i * 0.03);
+      for (let s = 0; s < 8; s++) {
+        strokeArc(g, x, y, r, this.t * (0.6 - i * 0.12) + (s / 8) * Math.PI * 2, 0.45);
+      }
+    }
+    g.fillStyle(0x050407, 1);
+    fillDisc(g, x, y, 34);
+    g.lineStyle(3, 0xb35cf0, 0.9);
+    strokeRing(g, x, y, 34);
   }
 
   private wellCd = 0;

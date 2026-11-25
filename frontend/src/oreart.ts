@@ -74,7 +74,17 @@ export function orePalette(id: OreId): Record<string, number> {
 }
 
 /** Inline SVG for HTML UI (hotbar, price strip, shop). */
+// the HUD asks for these on every frame, so each is built once
+const iconCache = new Map<string, string>();
+
 export function oreIcon(id: OreId, cls = 'oi'): string {
+  const key = `${id}:${cls}`;
+  let svg = iconCache.get(key);
+  if (!svg) iconCache.set(key, (svg = drawOreIcon(id, cls)));
+  return svg;
+}
+
+function drawOreIcon(id: OreId, cls: string): string {
   const rows = ORE_SPRITE[id];
   const pal = orePalette(id);
   let rects = '';

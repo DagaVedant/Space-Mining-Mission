@@ -108,7 +108,14 @@ let toastCount = 0;
 // 7x6 / 7x7 pixel icons, drawn as crisp SVG rects like inventory sprites
 const HEART = ['.XX.XX.', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '..XXX..', '...X...'];
 const BOLT = ['....XX.', '...XX..', '..XX...', '.XXXXX.', '...XX..', '..XX...', '.XX....'];
+const iconCache = new Map<string, string>();
 function pixelIcon(rows: string[], on: string, frac: number): string {
+  const key = `${on}:${frac}`;
+  let svg = iconCache.get(key);
+  if (!svg) iconCache.set(key, (svg = drawIcon(rows, on, frac)));
+  return svg;
+}
+function drawIcon(rows: string[], on: string, frac: number): string {
   const h = rows.length;
   const w = rows[0].length;
   let out = '';

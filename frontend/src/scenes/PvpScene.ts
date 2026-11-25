@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { fillDisc, strokeRing } from '../draw';
 import { buildTextures } from '../art';
 import { accountToken, websocketUrl } from '../cloud';
 import { loadSettings, type GameSettings } from '../settings';
@@ -135,7 +136,7 @@ export class PvpScene extends Phaser.Scene {
     grid.lineStyle(8, 0x5a2a24, 1);
     grid.strokeRect(0, 0, this.world.width, this.world.height);
     grid.lineStyle(2, 0xe8832a, 0.35);
-    grid.strokeCircle(this.world.width / 2, this.world.height / 2, 180);
+    strokeRing(grid, this.world.width / 2, this.world.height / 2, 180);
     for (let i = 0; i < 80; i++) {
       const x = (i * 197 + 41) % this.world.width;
       const y = (i * 113 + 73) % this.world.height;
@@ -275,7 +276,7 @@ export class PvpScene extends Phaser.Scene {
     }
     this.shots.clear();
     this.shots.fillStyle(0xffd074, 1);
-    for (const projectile of projectiles) this.shots.fillCircle(projectile.x, projectile.y, 4);
+    for (const projectile of projectiles) fillDisc(this.shots, projectile.x, projectile.y, 4);
   }
 
   update(_time: number, delta: number): void {
