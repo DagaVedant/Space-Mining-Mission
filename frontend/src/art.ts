@@ -34,7 +34,7 @@ function newG(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
 // Textures are baked from smooth vector drawing, then snapped to a chunky pixel grid:
 // average down to a small bitmap, give it a hard on/off edge, scale back up unsmoothed.
 function pixelate(scene: Phaser.Scene, key: string, w: number, h: number): void {
-  const px = Math.max(1, Math.min(5, Math.round(Math.max(w, h) / 14)));
+  const px = Math.max(1, Math.min(8, Math.round(Math.max(w, h) / 11)));
   if (px < 2) return;
   const src = scene.textures.get(key).getSourceImage() as HTMLCanvasElement;
   if (!(src instanceof HTMLCanvasElement)) return;
