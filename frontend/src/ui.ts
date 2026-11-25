@@ -57,10 +57,10 @@ export interface ShopApi {
 }
 
 const cache = new Map<string, string>();
-function setText(id: string, v: string): void {
+function setText(id: string, v: string, target?: HTMLElement): void {
   if (cache.get(id) === v) return;
   cache.set(id, v);
-  el(id).textContent = v;
+  (target ?? el(id)).textContent = v;
 }
 function setWidth(id: string, pct: number): void {
   const v = Math.max(0, Math.min(100, pct)).toFixed(1) + '%';
@@ -76,32 +76,70 @@ let shopTimer = 0;
 let pressed = false;
 let toastCount = 0;
 
+// 7x6 / 7x7 pixel icons, drawn as crisp SVG rects like inventory sprites
+const HEART = ['.XX.XX.', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '..XXX..', '...X...'];
+const BOLT = ['....XX.', '...XX..', '..XX...', '.XXXXX.', '...XX..', '..XX...', '.XX....'];
+function pixelIcon(rows: string[], on: string, frac: number): string {
+  const h = rows.length;
+  const w = rows[0].length;
+  let out = '';
+  const at = (x: number, y: number): boolean => y >= 0 && y < h && x >= 0 && x < w && rows[y][x] === 'X';
+  for (let y = -1; y <= h; y++) {
+    for (let x = -1; x <= w; x++) {
+      if (at(x, y)) {
+        const lit = x + 0.5 <= frac * w;
+        out += `<rect x="${x + 1}" y="${y + 1}" width="1" height="1" fill="${lit ? on : '#3a3a3a'}"/>`;
+      } else if (at(x - 1, y) || at(x + 1, y) || at(x, y - 1) || at(x, y + 1)) {
+        out += `<rect x="${x + 1}" y="${y + 1}" width="1" height="1" fill="#000"/>`;
+      }
+    }
+  }
+  return `<svg viewBox="0 0 ${w + 2} ${h + 2}" shape-rendering="crispEdges">${out}</svg>`;
+}
+function iconRow(rows: string[], on: string, value: number, max: number): string {
+  const n = 10;
+  const per = max / n;
+  let html = '';
+  for (let i = 0; i < n; i++) {
+    const f = Math.max(0, Math.min(1, (value - i * per) / per));
+    html += pixelIcon(rows, on, f > 0.75 ? 1 : f > 0.25 ? 0.5 : 0);
+  }
+  return html;
+}
+
 function buildHud(): void {
   if (hudBuilt) return;
   hudBuilt = true;
   const h = document.createElement('div');
   h.id = 'hud';
   h.className = 'hidden';
+  const slots = Array.from({ length: 9 }, (_, i) => {
+    const o = ORE_IDS[i];
+    if (!o) return '<div class="slot"></div>';
+    return `<div class="slot" id="slot-${o}" title="${ORES[o].name}"><i class="ic" style="background:${ORES[o].css}"></i><b class="n"></b></div>`;
+  }).join('');
   h.innerHTML = `
     <div id="hurt"></div>
     <div id="flare"></div>
-    <div id="bar">
-      <div class="cell cash"><label>CASH</label><b id="money" class="lcd"></b></div>
-      <div class="cell goalc"><label id="sector-name"></label><div class="track goal"><i id="b-goal"></i></div><small id="goal-text"></small></div>
-      <div class="cell"><label>HULL <b id="v-hull"></b></label><div class="track"><i id="b-hull" class="hull"></i></div></div>
-      <div class="cell"><label>FUEL <b id="v-fuel"></b></label><div class="track"><i id="b-fuel" class="fuel"></i></div></div>
-      <div class="cell"><label>HOLD <b id="v-cargo"></b></label><div class="track"><i id="b-cargo" class="cargo"></i></div></div>
-      <div class="cell grow"></div>
+    <div id="bar" class="plate">
+      <div class="cash"><span id="money"></span></div>
+      <div id="sector-name"></div>
+      <div id="goal-text" class="dimt"></div>
+      <div id="v-cargo" class="dimt"></div>
     </div>
-    <div id="hotbar">${ORE_IDS.map((o) => `<div class="slot" id="slot-${o}" title="${ORES[o].name}"><span class="nm">${ORES[o].name}</span><i class="ic" style="background:${ORES[o].css}"></i><b class="n"></b></div>`).join('')}</div>
     <div class="win contracts"><div class="wt">CONTRACTS</div><div class="wb" id="contracts"></div></div>
     <div id="bossbar" class="hidden"><span>DREADNOUGHT</span><div class="track"><i id="b-boss"></i></div></div>
     <div id="banner" class="hidden"></div>
     <div id="toasts"></div>
     <div id="hint" class="hidden"></div>
-    <div id="pricebar"><div class="pl">ORE PRICES</div><div id="ticker"></div></div>
+    <div id="pricebar" class="plate"><div class="pl">PRICES</div><div id="ticker"></div></div>
     <div class="keys" id="keys">WASD move | Shift turbo | Space or click fire (aim with mouse) | E dock / gate | Esc pause | M mute</div>
-    <div class="win mapwin"><div class="wt">SECTOR MAP</div><canvas id="minimap" width="180" height="180"></canvas></div>`;
+    <div class="win mapwin"><div class="wt">MAP</div><canvas id="minimap" width="180" height="180"></canvas></div>
+    <div id="dock">
+      <div class="vitals"><div id="hearts" class="icons"></div><div id="bolts" class="icons"></div></div>
+      <div class="xp" title="Sector quota"><i id="b-goal"></i></div>
+      <div id="hotbar">${slots}</div>
+    </div>`;
   root().appendChild(h);
 }
 
@@ -122,25 +160,28 @@ export const hud = {
     return (el('minimap') as HTMLCanvasElement).getContext('2d') as CanvasRenderingContext2D;
   },
   update(s: HudState): void {
-    setWidth('b-hull', (s.hull / s.hullMax) * 100);
-    setText('v-hull', `${Math.ceil(s.hull)}/${s.hullMax}`);
-    setWidth('b-fuel', (s.fuel / s.fuelMax) * 100);
-    setText('v-fuel', `${Math.ceil(s.fuel)}/${s.fuelMax}`);
     const used = cargoTotal(s.cargo);
-    setWidth('b-cargo', (used / s.cargoMax) * 100);
-    setText('v-cargo', `${used}/${s.cargoMax}`);
-    el('b-fuel').classList.toggle('low', s.fuel / s.fuelMax < 0.2);
-    el('b-hull').classList.toggle('low', s.hull / s.hullMax < 0.3);
+    const hearts = iconRow(HEART, '#d83a3a', s.hull, s.hullMax);
+    const bolts = iconRow(BOLT, '#e0a82e', s.fuel, s.fuelMax);
+    if (cache.get('hearts') !== hearts) {
+      cache.set('hearts', hearts);
+      el('hearts').innerHTML = hearts;
+    }
+    if (cache.get('bolts') !== bolts) {
+      cache.set('bolts', bolts);
+      el('bolts').innerHTML = bolts;
+    }
     for (const o of ORE_IDS) {
       const slot = el(`slot-${o}`);
       slot.classList.toggle('has', s.cargo[o] > 0);
-      (slot.querySelector('.n') as HTMLElement).textContent = s.cargo[o] > 0 ? String(s.cargo[o]) : '';
+      setText(`slot-${o}:n`, s.cargo[o] > 0 ? String(s.cargo[o]) : '', slot.querySelector('.n') as HTMLElement);
     }
     setText('money', money(s.money));
     const sec = SECTORS[s.sector];
-    setText('sector-name', `SECTOR ${s.sector + 1}: ${sec.name.toUpperCase()}`);
+    setText('sector-name', `Sector ${s.sector + 1}: ${sec.name}`);
     setWidth('b-goal', (s.earned / s.goal) * 100);
     setText('goal-text', s.earned >= s.goal ? 'Quota met' : `Quota ${money(s.earned)} / ${money(s.goal)}`);
+    setText('v-cargo', `Hold ${used} / ${s.cargoMax}`);
     const cs = s.contracts
       .map((c) => {
         const left = Math.max(0, Math.round(c.deadline - s.clock));
@@ -264,7 +305,7 @@ export function showMenu(save: SaveData | null, onContinue: () => void, onNew: (
     : '';
   o.innerHTML = `
     <div class="win menu-body">
-      <div class="wt">ROCKBREAKER MINING CO. - OUTER BELT OPERATIONS</div>
+      <div class="wt">Rockbreaker Mining Co.</div>
       <div class="wb">
         <h1>ROCKBREAKER</h1>
         <p class="sub">Crack the rocks. Sell the ore. Outgrow the belt.</p>
