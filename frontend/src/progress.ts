@@ -48,7 +48,7 @@ export function statsFor(l: Levels): ShipStats {
     damage: 10 + 5 * l.cannon,
     fireDelay: 280 - 30 * l.rate,
     hullMax: 100 + 30 * l.hull,
-    cargoMax: 30 + 12 * l.cargo,
+    cargoMax: 64 + 16 * l.cargo,
     accel: 520 + 70 * l.thrust,
     maxSpeed: 340 + 35 * l.thrust,
     fuelMax: 100 + 25 * l.tank,

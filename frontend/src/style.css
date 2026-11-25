@@ -65,7 +65,7 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  font-size: calc(var(--u) * 19);
+  font-size: calc(var(--u) * 22);
   line-height: 1.1;
   user-select: none;
 }
@@ -208,7 +208,7 @@ button.x {
   position: absolute;
   left: calc(var(--u) * 10);
   top: calc(var(--u) * 10);
-  width: calc(var(--u) * 290);
+  width: calc(var(--u) * 330);
   padding: 0.35em 0.7em 0.45em;
   display: grid;
   gap: 0.05em;
@@ -225,17 +225,17 @@ button.x {
 /* price strip beside the stats plate */
 #pricebar {
   position: absolute;
-  left: calc(var(--u) * 310);
+  left: calc(var(--u) * 350);
   right: calc(var(--u) * 10);
   top: calc(var(--u) * 10);
-  height: calc(var(--u) * 76);
+  height: calc(var(--u) * 84);
   display: flex;
   align-items: stretch;
 }
 #pricebar .pl {
   display: grid;
   place-items: center;
-  padding: 0 0.9em;
+  padding: 0 0.5em;
   border-right: 2px solid #000;
   color: var(--ink-dim);
 }
@@ -248,21 +248,20 @@ button.x {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 0.5em;
-  padding: 0.2em 0.5em;
+  gap: 0.3em;
+  padding: 0.2em 0.4em;
+  min-width: 0;
   border-right: 2px solid #000;
 }
 .tk:last-child {
   border-right: 0;
 }
-.tk i,
-.sw {
-  width: 0.7em;
-  height: 0.7em;
+.oi {
+  width: 1.5em;
+  height: auto;
+  flex: none;
   display: inline-block;
-  box-shadow:
-    inset 2px 2px 0 rgba(255, 255, 255, 0.4),
-    inset -2px -2px 0 rgba(0, 0, 0, 0.35);
+  vertical-align: middle;
 }
 .sw {
   margin-right: 0.5em;
@@ -270,9 +269,12 @@ button.x {
 .tk span {
   color: var(--ink);
 }
+.tk .oi {
+  width: 1.25em;
+}
 .tk b {
   margin-left: auto;
-  font-size: 1.45em;
+  font-size: 1.3em;
   font-weight: 400;
   color: var(--gold);
   white-space: nowrap;
@@ -474,7 +476,7 @@ td em.down {
   left: 50%;
   bottom: calc(var(--u) * 10);
   transform: translateX(-50%);
-  width: calc(var(--u) * 9 * 58 + var(--u) * 4);
+  width: calc(var(--u) * 9 * 64 + var(--u) * 4);
 }
 .vitals {
   display: flex;
@@ -513,8 +515,8 @@ td em.down {
 }
 .slot {
   position: relative;
-  width: calc(var(--u) * 58);
-  height: calc(var(--u) * 58);
+  width: calc(var(--u) * 64);
+  height: calc(var(--u) * 64);
   background: var(--slot);
   border: 3px solid;
   border-color: #373737 #fff #fff #373737;
@@ -523,22 +525,20 @@ td em.down {
   margin-right: 0;
 }
 .slot .ic {
-  width: calc(var(--u) * 28);
-  height: calc(var(--u) * 28);
-  box-shadow:
-    inset 4px 4px 0 rgba(255, 255, 255, 0.4),
-    inset -4px -4px 0 rgba(0, 0, 0, 0.35),
-    0 0 0 2px #000;
+  width: calc(var(--u) * 42);
+  height: auto;
   opacity: 0.3;
+  filter: grayscale(1);
 }
 .slot.has .ic {
   opacity: 1;
+  filter: none;
 }
 .slot .n {
   position: absolute;
   right: 3px;
   bottom: -1px;
-  font-size: 1.3em;
+  font-size: 1.6em;
   color: #fff;
 }
 .slot .n:empty {

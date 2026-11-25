@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ORES, ORE_IDS, type OreId } from './data';
 import { mulberry32 } from './rng';
+import { ORE_SPRITE, orePalette } from './oreart';
 
 type P = [number, number];
 
@@ -435,14 +436,19 @@ function makeSmall(scene: Phaser.Scene): void {
   bake(m, 'smoke', 12, 12);
 
   for (const id of ORE_IDS) {
-    const col = ORES[id].color;
+    // dropped ore uses the same hand-made sprite as the hotbar, drawn 2x with no smoothing
     const g = newG(scene);
-    const pts: P[] = [[8, 1], [15, 8], [8, 15], [1, 8]];
-    fill(g, pts, shade(col, 0.8));
-    fill(g, [[8, 1], [15, 8], [8, 8]], shade(col, 1.25));
-    fill(g, [[8, 1], [1, 8], [8, 8]], shade(col, 1.05));
-    outline(g, pts, 0x12100d, 1.5);
-    bake(g, `chunk_${id}`, 16, 16);
+    const pal = orePalette(id);
+    const rows = ORE_SPRITE[id];
+    const off = 24 - rows.length * 2;
+    rows.forEach((row, y) => {
+      for (let x = 0; x < row.length; x++) {
+        if (row[x] === '.') continue;
+        g.fillStyle(pal[row[x]], 1);
+        g.fillRect(x * 2, off / 2 + y * 2, 2, 2);
+      }
+    });
+    bake(g, `chunk_${id}`, 24, 24, false);
   }
 }
 

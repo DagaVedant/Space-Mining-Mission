@@ -433,7 +433,7 @@ export class PlayScene extends Phaser.Scene {
     c.age = 0;
     c.setDepth(2);
     const b = c.body as Body;
-    b.setCircle(7, 1, 1);
+    b.setCircle(9, 3, 3);
     b.setCollideWorldBounds(true);
     b.setBounce(0.5);
     b.setDamping(true);

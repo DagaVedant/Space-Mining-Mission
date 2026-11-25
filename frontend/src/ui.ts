@@ -1,4 +1,5 @@
 import { ORES, ORE_IDS, SECTORS, UPGRADES, type OreId, type UpgradeId } from './data';
+import { oreIcon } from './oreart';
 import { priceOf, targetMult, type MarketState } from './market';
 import {
   canBuyUpgrade,
@@ -116,7 +117,7 @@ function buildHud(): void {
   const slots = Array.from({ length: 9 }, (_, i) => {
     const o = ORE_IDS[i];
     if (!o) return '<div class="slot"></div>';
-    return `<div class="slot" id="slot-${o}" title="${ORES[o].name}"><i class="ic" style="background:${ORES[o].css}"></i><b class="n"></b></div>`;
+    return `<div class="slot" id="slot-${o}" title="${ORES[o].name}">${oreIcon(o, 'ic')}<b class="n"></b></div>`;
   }).join('');
   h.innerHTML = `
     <div id="hurt"></div>
@@ -202,7 +203,7 @@ export const hud = {
       const cls = ch > 0.4 ? 'up' : ch < -0.4 ? 'down' : '';
       const sign = ch > 0.4 ? '+' : '';
       const ev = targetMult(s.market, o) !== 1 ? ' ev' : '';
-      return `<div class="tk${ev}"><i style="background:${ORES[o].css}"></i><span>${ORES[o].name}</span><b>${money(priceOf(s.market, o))}</b><em class="${cls}">${sign}${ch.toFixed(0)}%</em></div>`;
+      return `<div class="tk${ev}">${oreIcon(o)}<span>${ORES[o].name}</span><b>${money(priceOf(s.market, o))}</b><em class="${cls}">${sign}${ch.toFixed(0)}%</em></div>`;
     }).join('');
     const tkFull = tk + (s.market.events.length ? `<div class="evt">${s.market.events.map((e) => e.label).join(' / ')}</div>` : '');
     if (cache.get('tk') !== tkFull) {
@@ -385,7 +386,7 @@ function renderShop(): void {
       const cls = ch > 0.4 ? 'up' : ch < -0.4 ? 'down' : '';
       const ev = api.market.events.find((e) => e.ore === o);
       return `<tr>
-        <td><i class="sw" style="background:${ORES[o].css}"></i>${ORES[o].name}${ev ? `<small class="evtag">${ev.label.split(':')[0]}</small>` : ''}</td>
+        <td>${oreIcon(o, 'oi sw')}${ORES[o].name}${ev ? `<small class="evtag">${ev.label.split(':')[0]}</small>` : ''}</td>
         <td class="num">${money(p)}</td>
         <td class="num"><em class="${cls}">${ch > 0.4 ? '+' : ''}${ch.toFixed(0)}%</em></td>
         <td class="num">${cargo[o]}</td>
@@ -440,7 +441,7 @@ function renderShop(): void {
             ? `<button class="primary" data-act="deliver">Deliver</button>`
             : `<span class="dim">${have} / ${c.qty} held</span>`;
       return `<tr>
-        <td><i class="sw" style="background:${ORES[c.ore].css}"></i>${ORES[c.ore].name}</td>
+        <td>${oreIcon(c.ore, 'oi sw')}${ORES[c.ore].name}</td>
         <td class="num">${c.qty}</td>
         <td class="num">${mmss(left)}</td>
         <td class="num">${money(c.reward)}</td>
