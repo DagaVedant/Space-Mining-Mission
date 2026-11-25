@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { sfx } from '../audio';
 import { AST_R, VARIANTS, type Sz } from '../art';
-import { ORES, ORE_IDS, SECTORS, UPGRADES, type OreId, type SectorDef, type UpgradeId } from '../data';
+import { ORES, ORE_IDS, SECTORS, SHIP_SKINS, UPGRADES, type OreId, type SectorDef, type UpgradeId } from '../data';
 import { createMarket, priceOf, stepMarket, type MarketState } from '../market';
 import {
   addEarnings,
@@ -12,7 +12,9 @@ import {
   makeContract,
   persist,
   refuelCost,
+  recordDailyProgress,
   repairCost,
+  refreshUnlocks,
   resolveContracts,
   sectorGoalReached,
   statsFor,
@@ -34,6 +36,12 @@ interface Rock extends Spr {
   sz: Sz;
   hp: number;
 }
+interface Planet {
+  x: number;
+  y: number;
+  radius: number;
+  gravity: number;
+}
 interface Chunk extends Spr {
   ore: OreId;
   age: number;
@@ -47,6 +55,7 @@ interface EBullet extends Spr {
   dmg: number;
 }
 interface Pirate extends Spr {
+  kind: PirateKind;
   hp: number;
   mode: 'attack' | 'flee';
   fireCd: number;
@@ -55,6 +64,16 @@ interface Pirate extends Spr {
   strafe: number;
   ramCd: number;
 }
+type PirateKind = 'raider' | 'interceptor' | 'bomber';
+
+const PIRATE_TYPES: Record<
+  PirateKind,
+  { texture: string; hp: number; speed: number; accel: number; shotDamage: number; shotSpeed: number; fireDelay: number; range: number; radius: number }
+> = {
+  raider: { texture: 'pirate', hp: 1, speed: 240, accel: 1, shotDamage: 6, shotSpeed: 380, fireDelay: 1.5, range: 580, radius: 16 },
+  interceptor: { texture: 'pirate_interceptor', hp: 0.72, speed: 360, accel: 1.28, shotDamage: 5, shotSpeed: 430, fireDelay: 1.05, range: 620, radius: 14 },
+  bomber: { texture: 'pirate_bomber', hp: 1.65, speed: 180, accel: 0.72, shotDamage: 11, shotSpeed: 310, fireDelay: 2.2, range: 760, radius: 20 },
+};
 interface Drone extends Spr {
   hp: number;
   target: Rock | null;
@@ -82,7 +101,8 @@ const AST: Record<Sz, { hp: number; mass: number; drop: number; next: Sz | null;
 const SAFE_R = 270;
 const DOCK_R = 200;
 const GATE_R = 150;
-const WELL_R = 380;
+const WELL_R = 460;
+const PLANET_GRAVITY_R = 820;
 const FONT = 'Bahnschrift, "Segoe UI", system-ui, sans-serif';
 
 const rnd = (a: number, b: number): number => a + Math.random() * (b - a);
@@ -102,6 +122,8 @@ export class PlayScene extends Phaser.Scene {
   private player!: Spr;
   private flame!: Phaser.GameObjects.Image;
   private hull = 100;
+  private shield = 0;
+  private shieldRecharge = 0;
   private fuel = 100;
   private cargo: Cargo = emptyCargo();
 
@@ -121,7 +143,9 @@ export class PlayScene extends Phaser.Scene {
   private gx = 0;
   private gy = 0;
   private wells: { x: number; y: number }[] = [];
+  private planets: Planet[] = [];
   private wellGfx!: Phaser.GameObjects.Graphics;
+  private planetGfx!: Phaser.GameObjects.Graphics;
   private beamGfx!: Phaser.GameObjects.Graphics;
   private stars: Phaser.GameObjects.TileSprite[] = [];
 
@@ -157,6 +181,8 @@ export class PlayScene extends Phaser.Scene {
   private goalAnnounced = false;
   private flashMsg: { text: string; kind: 'warn' | 'danger' | 'good'; t: number } | null = null;
   private deadBanner = false;
+  private cloudErrorHandler = (): void => hud.toast('Cloud sync failed; your local save is still available.', 'bad');
+  private cloudUpdateHandler = (): void => hud.toast('A newer cloud save was synchronized.', 'info');
 
   private keyHandler = (e: KeyboardEvent): void => this.onKey(e);
   private blurHandler = (): void => {
@@ -170,7 +196,7 @@ export class PlayScene extends Phaser.Scene {
   create(): void {
     this.save = session.save;
     this.sector = SECTORS[this.save.sector];
-    this.stats = statsFor(this.save.levels);
+    this.stats = statsFor(this.save.levels, this.save.selectedPilot);
     this.S = this.sector.size;
     this.cx = this.S / 2;
     this.cy = this.S / 2;
@@ -194,7 +220,10 @@ export class PlayScene extends Phaser.Scene {
     this.flashMsg = null;
     this.deadBanner = false;
     this.wells = [];
+    this.planets = [];
     this.hull = this.stats.hullMax;
+    this.shield = this.stats.shieldMax;
+    this.shieldRecharge = 0;
     this.fuel = this.stats.fuelMax;
     this.cargo = { ...emptyCargo(), ...session.cargo };
     this.market = createMarket(Math.random);
@@ -212,6 +241,7 @@ export class PlayScene extends Phaser.Scene {
     this.buildStation();
     this.buildFx();
     this.spawnWells();
+    this.spawnPlanets();
     this.populate();
     this.buildPlayer();
     this.buildColliders();
@@ -221,9 +251,13 @@ export class PlayScene extends Phaser.Scene {
     this.keys = kb.addKeys('W,A,S,D,UP,LEFT,DOWN,RIGHT,SPACE,SHIFT') as Record<string, Phaser.Input.Keyboard.Key>;
     window.addEventListener('keydown', this.keyHandler);
     window.addEventListener('blur', this.blurHandler);
+    window.addEventListener('rockbreaker-cloud-save-error', this.cloudErrorHandler);
+    window.addEventListener('rockbreaker-cloud-save-updated', this.cloudUpdateHandler);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       window.removeEventListener('keydown', this.keyHandler);
       window.removeEventListener('blur', this.blurHandler);
+      window.removeEventListener('rockbreaker-cloud-save-error', this.cloudErrorHandler);
+      window.removeEventListener('rockbreaker-cloud-save-updated', this.cloudUpdateHandler);
       closeShop();
       closeOverlay();
       hud.hide();
@@ -267,6 +301,7 @@ export class PlayScene extends Phaser.Scene {
       sz.strokePath();
     }
     this.wellGfx = this.add.graphics().setDepth(-5);
+    this.planetGfx = this.add.graphics().setDepth(-4);
     this.beamGfx = this.add.graphics().setDepth(7);
   }
 
@@ -293,6 +328,33 @@ export class PlayScene extends Phaser.Scene {
     if (this.sector.boss) {
       this.gate.setVisible(false);
       this.gateGlow.setVisible(false);
+    }
+  }
+
+  private updatePlanets(dt: number): void {
+    for (const planet of this.planets) {
+      const pull = (obj: Spr, scale: number): number => {
+        const dx = planet.x - obj.x;
+        const dy = planet.y - obj.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance > planet.gravity || distance < 1) return distance;
+        const strength = 820 * Math.pow(1 - distance / planet.gravity, 1.2) * scale;
+        const body = obj.body as Body;
+        body.velocity.x += (dx / distance) * strength * dt;
+        body.velocity.y += (dy / distance) * strength * dt;
+        return distance;
+      };
+      if (!this.dead) {
+        const distance = pull(this.player, 1);
+        if (distance <= planet.radius + 14) {
+          hud.toast('Planetary gravity crushed your ship.', 'bad');
+          this.hurtPlayer(this.stats.hullMax + this.stats.shieldMax + 1);
+        }
+      }
+      for (const r of this.rocks.getChildren() as Rock[]) pull(r, 0.7);
+      for (const pr of this.pirates.getChildren() as Pirate[]) pull(pr, 0.55);
+      for (const c of this.chunks.getChildren() as Chunk[]) pull(c, 0.5);
+      for (const d of this.drones.getChildren() as Drone[]) pull(d, 0.35);
     }
   }
 
@@ -339,6 +401,28 @@ export class PlayScene extends Phaser.Scene {
     }
   }
 
+  private spawnPlanets(): void {
+    for (let n = 0; n < this.sector.planets; n++) {
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const x = rnd(600, this.S - 600);
+        const y = rnd(600, this.S - 600);
+        const radius = rnd(100, 145);
+        if (Phaser.Math.Distance.Between(x, y, this.cx, this.cy) < 1050) continue;
+        if (Phaser.Math.Distance.Between(x, y, this.gx, this.gy) < 850) continue;
+        if (this.wells.some((w) => Phaser.Math.Distance.Between(x, y, w.x, w.y) < 1250)) continue;
+        if (this.planets.some((p) => Phaser.Math.Distance.Between(x, y, p.x, p.y) < radius + p.radius + 1100)) continue;
+        this.planets.push({ x, y, radius, gravity: PLANET_GRAVITY_R });
+        const texture = `planet_${Math.floor(Math.random() * 3)}`;
+        this.add.image(x, y, texture).setScale((radius * 2) / 256).setDepth(0);
+        this.planetGfx.lineStyle(2, 0x86a9c9, 0.15);
+        this.planetGfx.strokeCircle(x, y, PLANET_GRAVITY_R);
+        this.planetGfx.lineStyle(2, 0x86a9c9, 0.1);
+        this.planetGfx.strokeCircle(x, y, radius + 80);
+        break;
+      }
+    }
+  }
+
   private populate(): void {
     const n = this.sector.asteroids;
     for (let i = 0; i < n; i++) {
@@ -350,6 +434,7 @@ export class PlayScene extends Phaser.Scene {
         if (Phaser.Math.Distance.Between(x, y, this.cx, this.cy) < 520) continue;
         if (Phaser.Math.Distance.Between(x, y, this.gx, this.gy) < 260) continue;
         if (this.wells.some((w) => Phaser.Math.Distance.Between(x, y, w.x, w.y) < 160)) continue;
+        if (this.planets.some((p) => Phaser.Math.Distance.Between(x, y, p.x, p.y) < p.radius + 100)) continue;
         let clear = true;
         for (const r of this.rocks.getChildren() as Rock[]) {
           if (Phaser.Math.Distance.Between(x, y, r.x, r.y) < 150) {
@@ -365,7 +450,8 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private buildPlayer(): void {
-    this.player = this.physics.add.sprite(this.cx + 260, this.cy, 'ship').setDepth(5);
+    const skin = SHIP_SKINS.find((candidate) => candidate.id === this.save.selectedSkin) ?? SHIP_SKINS[0];
+    this.player = this.physics.add.sprite(this.cx + 260, this.cy, 'ship').setTint(skin.tint).setDepth(5);
     const b = this.player.body as Body;
     b.setCircle(14, 10, 10);
     b.setCollideWorldBounds(true);
@@ -415,7 +501,7 @@ export class PlayScene extends Phaser.Scene {
     body.mass = AST[sz].mass;
     if (vx === undefined || vy === undefined) {
       const a = rnd(0, Math.PI * 2);
-      const sp = sz === 'L' ? rnd(6, 22) : rnd(12, 40);
+      const sp = sz === 'L' ? rnd(22, 62) : rnd(36, 92);
       vx = Math.cos(a) * sp;
       vy = Math.sin(a) * sp;
     }
@@ -456,8 +542,12 @@ export class PlayScene extends Phaser.Scene {
       y = Phaser.Math.Clamp(p0.y + Math.sin(a) * d, 80, this.S - 80);
       if (Phaser.Math.Distance.Between(x, y, p0.x, p0.y) > 700) break;
     }
-    const pr = this.pirates.create(x, y, 'pirate') as Pirate;
-    pr.hp = 40 + 22 * this.save.sector;
+    const roll = Math.random();
+    const kind: PirateKind = this.save.sector < 1 ? 'raider' : roll < 0.34 ? 'interceptor' : roll < 0.58 ? 'bomber' : 'raider';
+    const type = PIRATE_TYPES[kind];
+    const pr = this.pirates.create(x, y, type.texture) as Pirate;
+    pr.kind = kind;
+    pr.hp = (40 + 22 * this.save.sector) * type.hp;
     pr.mode = 'attack';
     pr.fireCd = rnd(1.5, 2.5);
     pr.fleeT = 0;
@@ -466,12 +556,12 @@ export class PlayScene extends Phaser.Scene {
     pr.ramCd = 0;
     pr.setDepth(4);
     const b = pr.body as Body;
-    b.setCircle(16, 7, 6);
+    b.setCircle(type.radius, pr.width / 2 - type.radius, pr.height / 2 - type.radius);
     b.setCollideWorldBounds(true);
     b.setBounce(0.5);
     b.setDamping(true);
     b.setDrag(0.5);
-    b.setMaxVelocity(240 + 12 * this.save.sector, 240 + 12 * this.save.sector);
+    b.setMaxVelocity(type.speed + 12 * this.save.sector, type.speed + 12 * this.save.sector);
     b.mass = 2;
     this.warpRing(x, y, 0xe5483a);
     sfx.pirate();
@@ -589,7 +679,10 @@ export class PlayScene extends Phaser.Scene {
 
   private hurtPlayer(amount: number, silent = false): void {
     if (this.docked || this.dead || this.warping) return;
-    this.hull -= amount;
+    this.shieldRecharge = 4;
+    const absorbed = Math.min(this.shield, amount);
+    this.shield -= absorbed;
+    this.hull -= amount - absorbed;
     if (!silent) {
       sfx.hurt();
       hud.hurt();
@@ -621,6 +714,8 @@ export class PlayScene extends Phaser.Scene {
     this.dead = false;
     this.deadBanner = false;
     this.hull = this.stats.hullMax;
+    this.shield = this.stats.shieldMax;
+    this.shieldRecharge = 0;
     this.fuel = this.stats.fuelMax;
     this.player.enableBody(true, this.cx + 260, this.cy, true, true);
     this.player.setVelocity(0, 0);
@@ -668,6 +763,7 @@ export class PlayScene extends Phaser.Scene {
     for (const o of ORE_IDS) for (let i = 0; i < p.loot[o]; i++) this.spawnChunk(x + rnd(-10, 10), y + rnd(-10, 10), o);
     const bounty = 40 + 25 * this.save.sector;
     this.earn(bounty);
+    recordDailyProgress(this.save, 'pirates', 1);
     this.floatText(x, y - 20, `Bounty ${money(bounty)}`);
     if (cargoTotal(p.loot) > 0) hud.toast('Pirate down. Your stolen ore dropped - grab it.', 'good');
   }
@@ -906,6 +1002,7 @@ export class PlayScene extends Phaser.Scene {
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.save.sector += 1;
       this.save.sectorEarned = 0;
+      refreshUnlocks(this.save);
       session.cargo = { ...this.cargo };
       persist(this.save);
       this.scene.restart();
@@ -930,7 +1027,7 @@ export class PlayScene extends Phaser.Scene {
         for (const o of list) {
           const n = this.cargo[o];
           if (!n) continue;
-          const v = Math.round(n * priceOf(this.market, o));
+          const v = Math.round(n * priceOf(this.market, o) * this.stats.saleMultiplier);
           this.cargo[o] = 0;
           total += v;
         }
@@ -947,13 +1044,15 @@ export class PlayScene extends Phaser.Scene {
       buy: (id: UpgradeId) => {
         const oldHull = this.stats.hullMax;
         const oldFuel = this.stats.fuelMax;
+        const oldShield = this.stats.shieldMax;
         if (!buyUpgrade(this.save, id)) {
           sfx.deny();
           return;
         }
-        this.stats = statsFor(this.save.levels);
+        this.stats = statsFor(this.save.levels, this.save.selectedPilot);
         this.hull += this.stats.hullMax - oldHull;
         this.fuel += this.stats.fuelMax - oldFuel;
+        this.shield += this.stats.shieldMax - oldShield;
         this.turretSpr.setVisible(this.save.levels.turret > 0);
         this.ensureDrones();
         sfx.buy();
@@ -1027,6 +1126,13 @@ export class PlayScene extends Phaser.Scene {
     this.t += dt;
     this.hitCd -= dt;
     this.pickupMsgCd -= dt;
+    if (this.shield < this.stats.shieldMax) {
+      this.shieldRecharge -= dt;
+      if (this.shieldRecharge <= 0) this.shield = Math.min(this.stats.shieldMax, this.shield + 18 * dt);
+    }
+    if (this.hitCd <= 0 && this.hull < this.stats.hullMax) {
+      this.hull = Math.min(this.stats.hullMax, this.hull + this.stats.hullRegen * dt);
+    }
     if (this.stats.drones > 0 && this.save.money > 0) {
       this.save.money = Math.max(0, this.save.money - droneUpkeepPerSecond(this.stats.drones) * dt);
     }
@@ -1091,8 +1197,10 @@ export class PlayScene extends Phaser.Scene {
     body.setMaxVelocity(this.stats.maxSpeed * (this.fuel > 0 ? 1 : 0.55) * boost);
     body.setAcceleration(ax * this.stats.accel * power, ay * this.stats.accel * power);
     if (thrusting && this.fuel > 0) {
-      this.fuel = Math.max(0, this.fuel - (turbo ? 7 : 2.6) * dt);
+      this.fuel = Math.max(0, this.fuel - (turbo ? 7 * this.stats.sprintEfficiency : 2.6) * dt);
       if (this.fuel === 0) hud.toast('Out of fuel - limp back to the station.', 'bad');
+    } else if (!thrusting && this.fuel < this.stats.fuelMax) {
+      this.fuel = Math.min(this.stats.fuelMax, this.fuel + this.stats.sprintRegen * dt);
     }
     sfx.thrust(thrusting ? 0.5 + (this.fuel > 0 ? 0.5 : 0) : 0);
 
@@ -1193,6 +1301,7 @@ export class PlayScene extends Phaser.Scene {
       if (d < 28) {
         if (space > 0) {
           this.cargo[c.ore] += 1;
+          recordDailyProgress(this.save, 'ore', 1);
           sfx.pickup();
           this.burst(this.fxOre, c.x, c.y, 3, ORES[c.ore].color);
           c.destroy();
@@ -1210,6 +1319,7 @@ export class PlayScene extends Phaser.Scene {
     const tgtPlayer = !this.dead && !this.docked;
     for (const pr of [...(this.pirates.getChildren() as Pirate[])]) {
       const body = pr.body as Body;
+      const type = PIRATE_TYPES[pr.kind];
       pr.fireCd -= dt;
       pr.ramCd -= dt;
       if (pr.mode === 'flee') {
@@ -1256,18 +1366,24 @@ export class PlayScene extends Phaser.Scene {
       let ax: number;
       let ay: number;
       if (dist > 300) {
-        ax = Math.cos(ang) * 460;
-        ay = Math.sin(ang) * 460;
+        ax = Math.cos(ang) * 460 * type.accel;
+        ay = Math.sin(ang) * 460 * type.accel;
       } else {
         const perp = ang + (Math.PI / 2) * pr.strafe;
         const out = dist < 190 ? -1 : 0.2;
-        ax = Math.cos(perp) * 330 + Math.cos(ang) * 260 * out;
-        ay = Math.sin(perp) * 330 + Math.sin(ang) * 260 * out;
+        ax = Math.cos(perp) * 330 * type.accel + Math.cos(ang) * 260 * out;
+        ay = Math.sin(perp) * 330 * type.accel + Math.sin(ang) * 260 * out;
       }
       body.setAcceleration(ax, ay);
-      if (dist < 580 && pr.fireCd <= 0 && Math.abs(Phaser.Math.Angle.Wrap(ang - pr.rotation)) < 0.5) {
-        pr.fireCd = Math.max(0.7, 1.5 - 0.1 * this.save.sector) + Math.random() * 0.5;
-        this.enemyShot(pr.x, pr.y, ang + rnd(-0.07, 0.07), 380 + 15 * this.save.sector, 6 + 2 * this.save.sector);
+      if (dist < type.range && pr.fireCd <= 0 && Math.abs(Phaser.Math.Angle.Wrap(ang - pr.rotation)) < 0.5) {
+        pr.fireCd = Math.max(0.65, type.fireDelay - 0.1 * this.save.sector) + Math.random() * 0.5;
+        this.enemyShot(
+          pr.x,
+          pr.y,
+          ang + rnd(-0.07, 0.07),
+          type.shotSpeed + 15 * this.save.sector,
+          type.shotDamage + 2 * this.save.sector,
+        );
       }
       if (isPlayer && dist < 42 && cargoTotal(this.cargo) > 0) this.steal(pr);
       else if (isPlayer && dist < 34 && pr.ramCd <= 0) {
@@ -1342,8 +1458,8 @@ export class PlayScene extends Phaser.Scene {
       body.velocity.x += (dx - body.velocity.x) * k;
       body.velocity.y += (dy - body.velocity.y) * k;
       d.rotation = Phaser.Math.Angle.RotateTo(d.rotation, face, 8 * dt);
-      if (tg && Phaser.Math.Distance.Between(d.x, d.y, tg.x, tg.y) < AST_R[tg.sz] + 170 && d.shotCd <= 0) {
-        d.shotCd = 0.8;
+      if (tg && Phaser.Math.Distance.Between(d.x, d.y, tg.x, tg.y) < AST_R[tg.sz] + 190 && d.shotCd <= 0) {
+        d.shotCd = 0.55;
         d.beam = 0.14;
         this.damageRock(tg, this.stats.droneDamage, 'drone');
       }
@@ -1358,8 +1474,11 @@ export class PlayScene extends Phaser.Scene {
     let best: Rock | null = null;
     let bestScore = Infinity;
     for (const r of this.rocks.getChildren() as Rock[]) {
-      if (Phaser.Math.Distance.Between(r.x, r.y, this.cx, this.cy) > 1200) continue;
-      const score = Phaser.Math.Distance.Between(d.x, d.y, r.x, r.y) + (r.sz === 'L' ? 220 : 0);
+      if (Phaser.Math.Distance.Between(r.x, r.y, this.cx, this.cy) > 1600) continue;
+      const score =
+        Phaser.Math.Distance.Between(d.x, d.y, r.x, r.y) +
+        (r.sz === 'L' ? 220 : 0) -
+        ORES[r.ore].base * 0.4;
       if (score < bestScore) {
         bestScore = score;
         best = r;
@@ -1577,27 +1696,29 @@ export class PlayScene extends Phaser.Scene {
         const dy = w.y - obj.y;
         const d = Math.hypot(dx, dy);
         if (d > WELL_R || d < 1) return;
-        const strength = 720 * Math.pow(1 - d / WELL_R, 1.3) * k;
+        const strength = 1250 * Math.pow(1 - d / WELL_R, 1.3) * k;
         const b = obj.body as Body;
         b.velocity.x += (dx / d) * strength * dt;
         b.velocity.y += (dy / d) * strength * dt;
       };
       if (!this.dead) {
         pull(this.player, 1);
-        if (Phaser.Math.Distance.Between(this.player.x, this.player.y, w.x, w.y) < 36) this.wellBurn(dt);
+        if (Phaser.Math.Distance.Between(this.player.x, this.player.y, w.x, w.y) < 44) this.wellBurn(dt);
       }
+      for (const r of this.rocks.getChildren() as Rock[]) pull(r, 0.75);
       for (const pr of this.pirates.getChildren() as Pirate[]) pull(pr, 0.6);
       for (const c of this.chunks.getChildren() as Chunk[]) pull(c, 0.5);
       for (const d of this.drones.getChildren() as Drone[]) pull(d, 0.35);
     }
+    this.updatePlanets(dt);
   }
 
   private wellCd = 0;
   private wellBurn(dt: number): void {
     this.wellCd -= dt;
     if (this.wellCd <= 0) {
-      this.wellCd = 0.4;
-      this.hurtPlayer(9);
+      this.wellCd = 0.3;
+      this.hurtPlayer(18);
     }
   }
 
@@ -1617,6 +1738,8 @@ export class PlayScene extends Phaser.Scene {
           const y = rnd(120, this.S - 120);
           if (Phaser.Math.Distance.Between(x, y, this.cx, this.cy) < 520) continue;
           if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < 1000) continue;
+          if (this.wells.some((w) => Phaser.Math.Distance.Between(x, y, w.x, w.y) < 160)) continue;
+          if (this.planets.some((p) => Phaser.Math.Distance.Between(x, y, p.x, p.y) < p.radius + 100)) continue;
           this.spawnRock(x, y, 'L', pickWeighted(this.sector.weights, Math.random));
           break;
         }
@@ -1653,6 +1776,8 @@ export class PlayScene extends Phaser.Scene {
     hud.update({
       hull: Math.max(0, this.hull),
       hullMax: this.stats.hullMax,
+      shield: Math.max(0, this.shield),
+      shieldMax: this.stats.shieldMax,
       fuel: this.fuel,
       fuelMax: this.stats.fuelMax,
       cargo: this.cargo,
@@ -1682,6 +1807,12 @@ export class PlayScene extends Phaser.Scene {
       c.beginPath();
       c.arc(w.x * k, w.y * k, WELL_R * k * 0.6, 0, Math.PI * 2);
       c.stroke();
+    }
+    for (const planet of this.planets) {
+      c.fillStyle = '#86a9c9';
+      c.beginPath();
+      c.arc(planet.x * k, planet.y * k, Math.max(2, planet.radius * k), 0, Math.PI * 2);
+      c.fill();
     }
     c.fillStyle = '#6a625a';
     for (const r of this.rocks.getChildren() as Rock[]) {

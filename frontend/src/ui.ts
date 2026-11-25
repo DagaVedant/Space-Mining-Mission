@@ -1,16 +1,20 @@
-import { ORES, ORE_IDS, SECTORS, UPGRADES, type OreId, type UpgradeId } from './data';
+import { ORES, ORE_IDS, PILOTS, SECTORS, SHIP_SKINS, UPGRADES, type OreId, type PilotId, type ShipSkinId, type UpgradeId } from './data';
 import { oreIcon } from './oreart';
 import { priceOf, targetMult, type MarketState } from './market';
+import type { Account } from './cloud';
 import {
   canBuyUpgrade,
   cargoTotal,
+  ensureDailyQuests,
   refuelCost,
   repairCost,
   upgradeCost,
   type Cargo,
   type Contract,
+  type DailyQuest,
   type SaveData,
   type ShipStats,
+  utcDate,
 } from './progress';
 
 const root = (): HTMLElement => document.getElementById('ui') as HTMLElement;
@@ -21,6 +25,8 @@ export const money = (n: number): string => '$' + Math.round(n).toLocaleString('
 export interface HudState {
   hull: number;
   hullMax: number;
+  shield: number;
+  shieldMax: number;
   fuel: number;
   fuelMax: number;
   cargo: Cargo;
@@ -138,6 +144,7 @@ function buildHud(): void {
     <div class="win mapwin"><div class="wt">MAP</div><canvas id="minimap" width="180" height="180"></canvas></div>
     <div id="dock">
       <div class="vitals"><div id="hearts" class="icons"></div><div id="bolts" class="icons"></div></div>
+      <div id="shield-bar" class="xp shield hidden"><i id="b-shield"></i></div>
       <div class="xp" title="Sector quota"><i id="b-goal"></i></div>
       <div id="hotbar">${slots}</div>
     </div>`;
@@ -181,6 +188,8 @@ export const hud = {
     const sec = SECTORS[s.sector];
     setText('sector-name', `Sector ${s.sector + 1}: ${sec.name}`);
     setWidth('b-goal', (s.earned / s.goal) * 100);
+    el('shield-bar').classList.toggle('hidden', s.shieldMax <= 0);
+    if (s.shieldMax > 0) setWidth('b-shield', (s.shield / s.shieldMax) * 100);
     setText('goal-text', s.earned >= s.goal ? 'Quota met' : `Quota ${money(s.earned)} / ${money(s.goal)}`);
     setText('v-cargo', `Hold ${used} / ${s.cargoMax}`);
     const cs = s.contracts
@@ -296,7 +305,18 @@ export function showOverlay(title: string, body: string, buttons: OverlayButton[
   (box.querySelector('button.primary') as HTMLElement | null)?.focus();
 }
 
-export function showMenu(save: SaveData | null, onContinue: () => void, onNew: () => void): void {
+export interface MenuActions {
+  playAi: () => void;
+  newGame: () => void;
+  pvp: () => void;
+  authenticate: (username: string, password: string, register: boolean) => Promise<void>;
+  signOut: () => Promise<void>;
+  selectPilot: (pilot: PilotId) => void;
+  selectSkin: (skin: ShipSkinId) => void;
+  claimDaily: (id: string) => void;
+}
+
+export function showMenu(save: SaveData | null, account: Account | null, actions: MenuActions, notice = ''): void {
   closeOverlay();
   const o = document.createElement('div');
   o.className = 'menu';
@@ -304,42 +324,111 @@ export function showMenu(save: SaveData | null, onContinue: () => void, onNew: (
   const info = save
     ? `<div class="save">Saved run: Sector ${save.sector + 1} (${SECTORS[save.sector].name}) | Cash ${money(save.money)} | ${upgrades} upgrades</div>`
     : '';
+  const accountPanel = account
+    ? `<div class="account-panel"><div><b>Signed in:</b> ${account.username}</div><button data-account="logout">Sign out</button><div class="account-status" role="status"></div></div>`
+    : `<form class="account-panel" id="account-form">
+        <label>Username <input name="username" minlength="3" maxlength="24" autocomplete="username" required></label>
+        <label>Password <input name="password" type="password" minlength="10" maxlength="128" autocomplete="current-password" required></label>
+        <div class="account-actions"><button type="submit" data-auth="login">Sign in</button><button type="submit" data-auth="register">Create account</button></div>
+        <div class="account-status" role="status"></div>
+      </form>`;
+  const currentSave = save ?? null;
+  const quests = currentSave ? ensureDailyQuests(currentSave, utcDate()) : [];
+  const dailyPanel = currentSave
+    ? `<div class="daily-panel"><b>DAILY CONTRACTS</b>${quests.map((quest) => dailyQuestRow(quest, currentSave)).join('')}</div>`
+    : '<div class="daily-panel"><b>DAILY CONTRACTS</b><span>Start a campaign to take on daily objectives.</span></div>';
+  const pilotOptions = save
+    ? PILOTS.filter((pilot) => save.unlockedPilots.includes(pilot.id))
+        .map((pilot) => `<option value="${pilot.id}" ${save.selectedPilot === pilot.id ? 'selected' : ''}>${pilot.name} — ${pilot.description}</option>`)
+        .join('')
+    : `<option value="prospector">Mara Venn — Balanced mining specialist.</option>`;
+  const skinOptions = save
+    ? SHIP_SKINS.filter((skin) => save.unlockedSkins.includes(skin.id))
+        .map((skin) => `<option value="${skin.id}" ${save.selectedSkin === skin.id ? 'selected' : ''}>${skin.name}</option>`)
+        .join('')
+    : '<option value="industrial">Industrial</option>';
   o.innerHTML = `
     <div class="win menu-body">
-      <div class="wt">Rockbreaker Mining Co.</div>
+      <div class="wt">Asteroid Breaker Mining Co.</div>
       <div class="wb">
-        <h1>ROCKBREAKER</h1>
-        <p class="sub">Crack the rocks. Sell the ore. Outgrow the belt.</p>
+        <h1>ASTEROID BREAKER</h1>
+        <p class="sub">Mine the belt. Build your ship. Take the fight online.</p>
         <div class="btns"></div>
         ${info}
+        <div class="loadout">
+          <label>Pilot <select id="pilot-select">${pilotOptions}</select></label>
+          <label>Ship skin <select id="skin-select">${skinOptions}</select></label>
+        </div>
+        ${dailyPanel}
+        <div class="account-wrap"><b>ASTEROID BREAKER ACCOUNT</b>${accountPanel}</div>
         <ul class="how">
           <li><b>WASD</b> thrust (you drift - plan your stops)</li>
           <li><b>Mouse</b> aim, <b>Space</b> or <b>left button</b> fires, <b>Shift</b> is turbo (burns fuel fast)</li>
           <li><b>E</b> dock at the station to sell, repair and upgrade</li>
-          <li>Watch the market, take contracts, hire drones, beat the pirates</li>
-          <li>Meet each sector's quota to open the warp gate. Four sectors, one Dreadnought.</li>
+          <li>Daily contracts reward credits and help unlock pilots and ship skins</li>
+          <li>Play against AI offline, or sign in to join live PvP battles</li>
         </ul>
       </div>
     </div>`;
   const box = o.querySelector('.btns') as HTMLElement;
-  if (save) {
-    const c = document.createElement('button');
-    c.className = 'primary';
-    c.textContent = 'Continue';
-    c.addEventListener('click', onContinue);
-    box.appendChild(c);
-  }
+  const ai = document.createElement('button');
+  ai.className = 'primary';
+  ai.textContent = 'Play against AI';
+  ai.addEventListener('click', actions.playAi);
+  box.appendChild(ai);
+  const pvp = document.createElement('button');
+  pvp.textContent = 'PvP';
+  pvp.disabled = !account;
+  pvp.title = account ? 'Join a live space battle' : 'Sign in to play online';
+  pvp.addEventListener('click', actions.pvp);
+  box.appendChild(pvp);
   const n = document.createElement('button');
-  n.textContent = 'New Game';
-  if (!save) n.className = 'primary';
+  n.textContent = 'New AI Campaign';
   n.addEventListener('click', () => {
-    if (save && !window.confirm('Start over? Your saved run will be erased.')) return;
-    onNew();
+    if (save && !window.confirm('Start over? Your current campaign save will be replaced.')) return;
+    actions.newGame();
   });
   box.appendChild(n);
+
+  const pilot = o.querySelector('#pilot-select') as HTMLSelectElement;
+  pilot.disabled = !save;
+  pilot.addEventListener('change', () => actions.selectPilot(pilot.value as PilotId));
+  const skin = o.querySelector('#skin-select') as HTMLSelectElement;
+  skin.disabled = !save;
+  skin.addEventListener('change', () => actions.selectSkin(skin.value as ShipSkinId));
+  o.querySelectorAll<HTMLButtonElement>('[data-claim]').forEach((button) => {
+    button.addEventListener('click', () => actions.claimDaily(button.dataset.claim ?? ''));
+  });
+  o.querySelector('[data-account="logout"]')?.addEventListener('click', () => {
+    void actions.signOut().catch((error: unknown) => setAccountStatus(o, error));
+  });
+  const form = o.querySelector<HTMLFormElement>('#account-form');
+  form?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const submitter = (event as SubmitEvent).submitter as HTMLButtonElement | null;
+    const data = new FormData(form);
+    const username = String(data.get('username') ?? '').trim();
+    const password = String(data.get('password') ?? '');
+    void actions.authenticate(username, password, submitter?.dataset.auth === 'register')
+      .catch((error: unknown) => setAccountStatus(o, error));
+  });
   root().appendChild(o);
   overlayEl = o;
+  if (notice) setAccountStatus(o, notice);
   (box.querySelector('button.primary') as HTMLElement | null)?.focus();
+}
+
+function dailyQuestRow(quest: DailyQuest, save: SaveData): string {
+  const current = Math.min(quest.target, Math.floor(save.dailyProgress[quest.metric]));
+  const claimed = save.claimedDaily.includes(quest.id);
+  const ready = current >= quest.target && !claimed;
+  return `<div class="daily-quest"><span>${quest.description}</span><small>${current}/${quest.target} · ${money(quest.reward)}</small>
+    <button data-claim="${quest.id}" ${ready ? '' : 'disabled'}>${claimed ? 'CLAIMED' : 'CLAIM'}</button></div>`;
+}
+
+function setAccountStatus(rootElement: HTMLElement, error: unknown): void {
+  const status = rootElement.querySelector<HTMLElement>('.account-status');
+  if (status) status.textContent = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Account request failed.';
 }
 
 // ---------- shop ----------

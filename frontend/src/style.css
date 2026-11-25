@@ -507,6 +507,9 @@ td em.down {
   width: 0;
   background: #7ec850;
 }
+.xp.shield i {
+  background: #56b9e8;
+}
 #hotbar {
   display: flex;
   background: #000;
@@ -581,6 +584,8 @@ td em.down {
 }
 .menu-body {
   width: calc(var(--u) * 540);
+  max-height: calc(100cqh - var(--u) * 24);
+  overflow-y: auto;
 }
 .menu h1 {
   margin: 0;
@@ -618,6 +623,76 @@ td em.down {
 .how b {
   color: #000;
   font-weight: 400;
+}
+.loadout,
+.account-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 0.35em 0.7em;
+  margin-top: 0.55em;
+}
+.loadout label,
+.account-panel label {
+  display: grid;
+  gap: 0.15em;
+  font-size: 0.92em;
+}
+.loadout select,
+.account-panel input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: #fff;
+  background: #373737;
+  border: 2px solid #000;
+  padding: 0.1em 0.3em;
+}
+.account-wrap,
+.daily-panel {
+  margin-top: 0.55em;
+  padding: 0.35em 0.55em;
+  background: #aaa;
+  border: 2px solid;
+  border-color: #555 #fff #fff #555;
+}
+.account-panel {
+  margin-top: 0.3em;
+}
+.account-actions {
+  display: flex;
+  gap: 0.35em;
+}
+.account-actions button,
+.account-panel > button {
+  font-size: 0.85em;
+  padding: 0.1em 0.5em;
+}
+.account-status {
+  grid-column: 1 / -1;
+  min-height: 1em;
+  color: #792d2d;
+  overflow-wrap: anywhere;
+}
+.daily-panel {
+  display: grid;
+  gap: 0.25em;
+}
+.daily-quest {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.15em 0.5em;
+  font-size: 0.85em;
+}
+.daily-quest small {
+  color: #555;
+}
+.daily-quest button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  font-size: 0.8em;
+  padding: 0.1em 0.5em;
 }
 
 /* ---- station window ---- */

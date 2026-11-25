@@ -5,9 +5,12 @@ import {
   addEarnings,
   buyUpgrade,
   canBuyUpgrade,
+  claimDailyQuest,
   cargoTotal,
   clearSave,
+  dailyQuestsFor,
   emptyCargo,
+  ensureDailyQuests,
   loadSave,
   makeContract,
   newSave,
@@ -15,6 +18,7 @@ import {
   resolveContracts,
   sectorGoalReached,
   statsFor,
+  utcDate,
   upgradeCost,
 } from '../src/progress';
 import { mulberry32, pickWeighted } from '../src/rng';
@@ -54,6 +58,53 @@ describe('upgrades', () => {
     s.money = 1e9;
     for (let i = 0; i < 10; i++) buyUpgrade(s, 'hull');
     expect(s.levels.hull).toBe(5);
+  });
+  it('adds working shield, scanner and refinery stats', () => {
+    const s = newSave();
+    const base = statsFor(s.levels);
+    s.money = 100000;
+    expect(buyUpgrade(s, 'shield')).toBe(true);
+    expect(buyUpgrade(s, 'scanner')).toBe(true);
+    expect(buyUpgrade(s, 'refinery')).toBe(true);
+    const upgraded = statsFor(s.levels);
+    expect(upgraded.shieldMax).toBeGreaterThan(base.shieldMax);
+    expect(upgraded.magnet).toBeGreaterThan(base.magnet);
+    expect(upgraded.saleMultiplier).toBeGreaterThan(base.saleMultiplier);
+  });
+  it('adds hull regeneration and sprint recharge upgrades', () => {
+    const save = newSave();
+    const base = statsFor(save.levels);
+    save.money = 100000;
+    expect(buyUpgrade(save, 'repair')).toBe(true);
+    expect(buyUpgrade(save, 'sprint')).toBe(true);
+    const upgraded = statsFor(save.levels);
+    expect(upgraded.hullRegen).toBeGreaterThan(base.hullRegen);
+    expect(upgraded.sprintRegen).toBeGreaterThan(base.sprintRegen);
+    expect(upgraded.fuelMax).toBeGreaterThan(base.fuelMax);
+    expect(upgraded.sprintEfficiency).toBeLessThan(base.sprintEfficiency);
+  });
+});
+
+describe('daily quests', () => {
+  it('rotates deterministically and resets progress at UTC day boundaries', () => {
+    const first = dailyQuestsFor('2026-11-25');
+    expect(dailyQuestsFor('2026-11-25')).toEqual(first);
+    expect(dailyQuestsFor('2026-11-26')).not.toEqual(first);
+    const save = newSave();
+    save.dailyQuestDate = '2026-11-24';
+    save.dailyProgress.ore = 9;
+    expect(ensureDailyQuests(save, '2026-11-25')).toEqual(first);
+    expect(save.dailyProgress).toEqual({ ore: 0, pirates: 0, credits: 0 });
+    expect(save.claimedDaily).toEqual([]);
+  });
+  it('awards a completed daily quest once', () => {
+    const save = newSave();
+    const quest = dailyQuestsFor(utcDate())[0];
+    save.dailyProgress[quest.metric] = quest.target;
+    const cash = save.money;
+    expect(claimDailyQuest(save, quest.id)).toBe(true);
+    expect(save.money).toBe(cash + quest.reward);
+    expect(claimDailyQuest(save, quest.id)).toBe(false);
   });
 });
 
@@ -97,12 +148,13 @@ describe('campaign', () => {
 });
 
 describe('save', () => {
+  let localStore: Map<string, string>;
   beforeEach(() => {
-    const store = new Map<string, string>();
+    localStore = new Map<string, string>();
     (globalThis as unknown as { localStorage: Storage }).localStorage = {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => void store.set(k, v),
-      removeItem: (k: string) => void store.delete(k),
+      getItem: (k: string) => localStore.get(k) ?? null,
+      setItem: (k: string, v: string) => void localStore.set(k, v),
+      removeItem: (k: string) => void localStore.delete(k),
     } as unknown as Storage;
   });
   it('round-trips and clears', () => {
@@ -114,5 +166,23 @@ describe('save', () => {
     expect(loadSave()?.levels.cargo).toBe(3);
     clearSave();
     expect(loadSave()).toBeNull();
+  });
+  it('migrates existing v1 localStorage saves without losing progress', () => {
+    localStore.set('rockbreaker-save-v1', JSON.stringify({
+      v: 1,
+      money: 999,
+      lifetime: 1200,
+      sector: 0,
+      sectorEarned: 700,
+      levels: { cannon: 2 },
+      won: false,
+    }));
+    const save = loadSave();
+    expect(save?.v).toBe(2);
+    expect(save?.money).toBe(999);
+    expect(save?.levels.cannon).toBe(2);
+    expect(save?.selectedPilot).toBe('prospector');
+    expect(localStore.has('rockbreaker-save-v2')).toBe(true);
+    expect(localStore.has('rockbreaker-save-v1')).toBe(false);
   });
 });

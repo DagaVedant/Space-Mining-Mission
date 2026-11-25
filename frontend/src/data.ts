@@ -26,7 +26,12 @@ export type UpgradeId =
   | 'magnet'
   | 'drones'
   | 'yield'
-  | 'turret';
+  | 'turret'
+  | 'shield'
+  | 'scanner'
+  | 'refinery'
+  | 'repair'
+  | 'sprint';
 
 export interface UpgradeDef {
   id: UpgradeId;
@@ -48,6 +53,43 @@ export const UPGRADES: UpgradeDef[] = [
   { id: 'drones', name: 'Drone Bay', desc: 'Each level adds an auto-mining drone (upkeep applies).', max: 5, baseCost: 260, growth: 1.9 },
   { id: 'yield', name: 'Drone Yield', desc: 'Drones hit harder and earn more.', max: 5, baseCost: 200, growth: 1.8 },
   { id: 'turret', name: 'Station Turret', desc: 'Defend the station and drones from pirates.', max: 5, baseCost: 150, growth: 1.75 },
+  { id: 'shield', name: 'Shield Generator', desc: 'Absorb damage and recharge while out of combat.', max: 5, baseCost: 180, growth: 1.8 },
+  { id: 'scanner', name: 'Ore Scanner', desc: 'Find ore from farther away.', max: 5, baseCost: 130, growth: 1.7 },
+  { id: 'refinery', name: 'Field Refinery', desc: 'Earn more credits when selling ore.', max: 5, baseCost: 220, growth: 1.85 },
+  { id: 'repair', name: 'Auto-Repair Nanites', desc: 'Regenerate hull when you are not taking damage.', max: 5, baseCost: 240, growth: 1.85 },
+  { id: 'sprint', name: 'Sprint Capacitors', desc: 'Recharge fuel while coasting and reduce sprint fuel use.', max: 5, baseCost: 180, growth: 1.75 },
+];
+
+export type PilotId = 'prospector' | 'vanguard' | 'scout';
+
+export interface PilotDef {
+  id: PilotId;
+  name: string;
+  description: string;
+  hullBonus: number;
+  thrustBonus: number;
+  saleBonus: number;
+}
+
+export const PILOTS: PilotDef[] = [
+  { id: 'prospector', name: 'Mara Venn', description: 'Balanced mining specialist.', hullBonus: 0, thrustBonus: 0, saleBonus: 0 },
+  { id: 'vanguard', name: 'Ivo Rook', description: 'Veteran pilot with reinforced plating.', hullBonus: 25, thrustBonus: 0, saleBonus: 0 },
+  { id: 'scout', name: 'Nia Sol', description: 'Fast courier with a better market eye.', hullBonus: 0, thrustBonus: 50, saleBonus: 0.08 },
+];
+
+export type ShipSkinId = 'industrial' | 'cobalt' | 'ember' | 'void';
+
+export interface ShipSkinDef {
+  id: ShipSkinId;
+  name: string;
+  tint: number;
+}
+
+export const SHIP_SKINS: ShipSkinDef[] = [
+  { id: 'industrial', name: 'Industrial', tint: 0xffffff },
+  { id: 'cobalt', name: 'Cobalt Run', tint: 0x7ab8ff },
+  { id: 'ember', name: 'Emberline', tint: 0xff9a62 },
+  { id: 'void', name: 'Voidglass', tint: 0xd996ff },
 ];
 
 export interface SectorDef {
@@ -61,6 +103,7 @@ export interface SectorDef {
   flareEvery: number;
   stormEvery: number;
   wells: number;
+  planets: number;
   boss: boolean;
 }
 
@@ -69,52 +112,84 @@ export const SECTORS: SectorDef[] = [
     name: 'Kuiper Verge',
     size: 3600,
     goal: 1800,
-    asteroids: 70,
+    asteroids: 90,
     weights: { ferrite: 8, cobalt: 2, platinum: 0, voidstone: 0 },
     pirateEvery: 80,
     maxPirates: 1,
     flareEvery: 0,
     stormEvery: 0,
     wells: 0,
+    planets: 0,
     boss: false,
   },
   {
     name: 'Cinder Belt',
     size: 4200,
     goal: 8000,
-    asteroids: 90,
+    asteroids: 115,
     weights: { ferrite: 5, cobalt: 4, platinum: 1, voidstone: 0 },
     pirateEvery: 60,
     maxPirates: 2,
     flareEvery: 95,
     stormEvery: 120,
     wells: 2,
+    planets: 0,
     boss: false,
   },
   {
     name: 'Gravel Deep',
     size: 4800,
     goal: 22000,
-    asteroids: 110,
+    asteroids: 140,
     weights: { ferrite: 3, cobalt: 4, platinum: 3, voidstone: 0.5 },
     pirateEvery: 48,
     maxPirates: 3,
     flareEvery: 75,
     stormEvery: 90,
     wells: 3,
+    planets: 1,
     boss: false,
   },
   {
     name: 'The Maw',
     size: 5200,
     goal: 50000,
-    asteroids: 120,
+    asteroids: 155,
     weights: { ferrite: 2, cobalt: 3, platinum: 4, voidstone: 2 },
     pirateEvery: 40,
     maxPirates: 4,
     flareEvery: 65,
     stormEvery: 75,
     wells: 4,
+    planets: 1,
+    boss: false,
+  },
+  {
+    name: 'Shatter Expanse',
+    size: 5600,
+    goal: 85000,
+    asteroids: 175,
+    weights: { ferrite: 1, cobalt: 3, platinum: 4, voidstone: 3 },
+    pirateEvery: 34,
+    maxPirates: 5,
+    flareEvery: 58,
+    stormEvery: 68,
+    wells: 5,
+    planets: 2,
+    boss: false,
+  },
+  {
+    name: 'Eclipse Frontier',
+    size: 6000,
+    goal: 125000,
+    asteroids: 195,
+    weights: { ferrite: 1, cobalt: 2, platinum: 4, voidstone: 5 },
+    pirateEvery: 30,
+    maxPirates: 5,
+    flareEvery: 52,
+    stormEvery: 62,
+    wells: 6,
+    planets: 2,
     boss: true,
   },
 ];

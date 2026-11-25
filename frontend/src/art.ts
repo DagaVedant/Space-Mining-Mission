@@ -232,24 +232,31 @@ function makeShip(scene: Phaser.Scene): void {
   bake(f, 'flame', 26, 14);
 }
 
-function makePirate(scene: Phaser.Scene): void {
+function makePirate(
+  scene: Phaser.Scene,
+  key: string,
+  hull: number,
+  litHull: number,
+  wing: number,
+  cannon: number,
+): void {
   const g = newG(scene);
   const dark = 0x14100e;
-  fill(g, [[43, 22], [28, 8], [10, 4], [2, 13], [8, 22], [2, 31], [10, 40], [28, 36]], 0x8f3b2e);
-  fill(g, [[43, 22], [28, 8], [10, 4], [2, 13], [8, 22]], 0xb4503f);
+  fill(g, [[43, 22], [28, 8], [10, 4], [2, 13], [8, 22], [2, 31], [10, 40], [28, 36]], hull);
+  fill(g, [[43, 22], [28, 8], [10, 4], [2, 13], [8, 22]], litHull);
   outline(g, [[43, 22], [28, 8], [10, 4], [2, 13], [8, 22], [2, 31], [10, 40], [28, 36]], dark, 2);
-  fill(g, [[30, 8], [38, 2], [34, 12]], 0x5c6068);
-  fill(g, [[30, 36], [38, 42], [34, 32]], 0x4a4d54);
+  fill(g, [[30, 8], [38, 2], [34, 12]], wing);
+  fill(g, [[30, 36], [38, 42], [34, 32]], shade(wing, 0.7));
   g.lineStyle(1, 0x4a1c14, 1);
   g.lineBetween(10, 22, 36, 22);
-  g.fillStyle(0xffcc33, 1);
+  g.fillStyle(cannon, 1);
   g.fillRect(27, 19, 9, 3);
   g.fillStyle(0x2b0f0b, 1);
   g.fillRect(27, 22, 9, 3);
-  g.fillStyle(0xe8832a, 1);
+  g.fillStyle(wing, 1);
   g.fillRect(2, 18, 4, 3);
   g.fillRect(2, 23, 4, 3);
-  bake(g, 'pirate', 46, 44);
+  bake(g, key, 46, 44);
 }
 
 function makeDrone(scene: Phaser.Scene): void {
@@ -334,6 +341,34 @@ function makeStation(scene: Phaser.Scene): void {
   t.lineStyle(2, 0x14181c, 1);
   t.strokeCircle(11, 11, 9);
   bake(t, 'turret', 40, 22);
+}
+
+function makePlanet(scene: Phaser.Scene, key: string, colors: [number, number, number, number]): void {
+  const [base, light, dark, detail] = colors;
+  const c = 128;
+  const r = 114;
+  const g = newG(scene);
+  g.lineStyle(10, shade(detail, 0.72), 0.9);
+  g.strokeEllipse(c, c, 248, 94);
+  g.lineStyle(4, shade(detail, 1.15), 0.9);
+  g.strokeEllipse(c, c, 250, 96);
+  g.fillStyle(dark, 1);
+  g.fillCircle(c, c, r);
+  g.fillStyle(base, 1);
+  g.fillCircle(c - 8, c - 8, r - 7);
+  g.fillStyle(light, 0.9);
+  g.fillEllipse(103, 91, 94, 48);
+  g.fillEllipse(158, 105, 58, 35);
+  g.fillStyle(detail, 0.9);
+  g.fillEllipse(110, 155, 78, 42);
+  g.fillEllipse(167, 146, 55, 30);
+  g.fillStyle(dark, 0.72);
+  g.fillEllipse(151, 132, 82, 166);
+  g.lineStyle(4, shade(light, 1.15), 0.85);
+  g.strokeCircle(c - 8, c - 8, r - 7);
+  g.lineStyle(5, shade(detail, 0.9), 0.9);
+  g.strokeEllipse(c, c, 248, 94);
+  bake(g, key, 256, 256);
 }
 
 function makeGate(scene: Phaser.Scene): void {
@@ -473,9 +508,14 @@ function makeStars(scene: Phaser.Scene): void {
 export function buildTextures(scene: Phaser.Scene): void {
   if (scene.textures.exists('ship')) return;
   makeShip(scene);
-  makePirate(scene);
+  makePirate(scene, 'pirate', 0x8f3b2e, 0xb4503f, 0x5c6068, 0xffcc33);
+  makePirate(scene, 'pirate_interceptor', 0x235c75, 0x378bad, 0x64c3db, 0xf0d35b);
+  makePirate(scene, 'pirate_bomber', 0x59406e, 0x7d5b9b, 0xb374d5, 0xff7c4a);
   makeDrone(scene);
   makeStation(scene);
+  makePlanet(scene, 'planet_0', [0x536d81, 0x82a6b0, 0x273b4d, 0x4ca48e]);
+  makePlanet(scene, 'planet_1', [0x7d5e47, 0xb4885c, 0x47372f, 0xd5a968]);
+  makePlanet(scene, 'planet_2', [0x594e7c, 0x9385b4, 0x302a4b, 0x58a9c5]);
   makeGate(scene);
   makeDread(scene);
   makeSmall(scene);
