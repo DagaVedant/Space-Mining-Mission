@@ -218,7 +218,7 @@ export class PlayScene extends Phaser.Scene {
     this.ensureDrones();
 
     const kb = this.input.keyboard!;
-    this.keys = kb.addKeys('W,A,S,D,UP,LEFT,DOWN,RIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = kb.addKeys('W,A,S,D,UP,LEFT,DOWN,RIGHT,SPACE,SHIFT') as Record<string, Phaser.Input.Keyboard.Key>;
     window.addEventListener('keydown', this.keyHandler);
     window.addEventListener('blur', this.blurHandler);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -1085,17 +1085,20 @@ export class PlayScene extends Phaser.Scene {
       ax /= mag;
       ay /= mag;
     }
-    const power = this.fuel > 0 ? 1 : 0.22;
-    body.setMaxVelocity(this.stats.maxSpeed * (this.fuel > 0 ? 1 : 0.55));
+    const turbo = k.SHIFT.isDown && thrusting && this.fuel > 0;
+    const boost = turbo ? 1.7 : 1;
+    const power = (this.fuel > 0 ? 1 : 0.22) * boost;
+    body.setMaxVelocity(this.stats.maxSpeed * (this.fuel > 0 ? 1 : 0.55) * boost);
     body.setAcceleration(ax * this.stats.accel * power, ay * this.stats.accel * power);
     if (thrusting && this.fuel > 0) {
-      this.fuel = Math.max(0, this.fuel - 2.6 * dt);
+      this.fuel = Math.max(0, this.fuel - (turbo ? 7 : 2.6) * dt);
       if (this.fuel === 0) hud.toast('Out of fuel - limp back to the station.', 'bad');
     }
     sfx.thrust(thrusting ? 0.5 + (this.fuel > 0 ? 0.5 : 0) : 0);
 
     const ptr = this.input.activePointer;
-    if (ptr.leftButtonDown()) {
+    const shooting = ptr.leftButtonDown() || k.SPACE.isDown;
+    if (shooting) {
       // firing: aim at the mouse
       const w = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
       p.rotation = Math.atan2(w.y - p.y, w.x - p.x);
@@ -1110,14 +1113,14 @@ export class PlayScene extends Phaser.Scene {
       this.flame.setVisible(true);
       this.flame.setRotation(p.rotation);
       this.flame.setPosition(p.x - fx * 14, p.y - fy * 14);
-      this.flame.setScale(0.7 + Math.random() * 0.5, 0.8 + Math.random() * 0.3);
+      this.flame.setScale((0.7 + Math.random() * 0.5) * (turbo ? 1.8 : 1), 0.8 + Math.random() * 0.3);
       this.exhaust.emitParticleAt(p.x - fx * 22, p.y - fy * 22, 1);
     } else {
       this.flame.setVisible(false);
     }
 
     this.fireCd -= dt;
-    if (ptr.leftButtonDown() && this.fireCd <= 0) this.fire();
+    if (shooting && this.fireCd <= 0) this.fire();
   }
 
   private fire(): void {

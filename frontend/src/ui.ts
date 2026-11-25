@@ -91,15 +91,16 @@ function buildHud(): void {
       <div class="cell"><label>HULL <b id="v-hull"></b></label><div class="track"><i id="b-hull" class="hull"></i></div></div>
       <div class="cell"><label>FUEL <b id="v-fuel"></b></label><div class="track"><i id="b-fuel" class="fuel"></i></div></div>
       <div class="cell"><label>HOLD <b id="v-cargo"></b></label><div class="track"><i id="b-cargo" class="cargo"></i></div></div>
-      <div class="cell grow"><label>CARGO</label><div id="cargo-list"></div></div>
+      <div class="cell grow"></div>
     </div>
+    <div id="hotbar">${ORE_IDS.map((o) => `<div class="slot" id="slot-${o}" title="${ORES[o].name}"><span class="nm">${ORES[o].name}</span><i class="ic" style="background:${ORES[o].css}"></i><b class="n"></b></div>`).join('')}</div>
     <div class="win contracts"><div class="wt">CONTRACTS</div><div class="wb" id="contracts"></div></div>
     <div id="bossbar" class="hidden"><span>DREADNOUGHT</span><div class="track"><i id="b-boss"></i></div></div>
     <div id="banner" class="hidden"></div>
     <div id="toasts"></div>
     <div id="hint" class="hidden"></div>
     <div id="pricebar"><div class="pl">ORE PRICES</div><div id="ticker"></div></div>
-    <div class="keys" id="keys">WASD move | Mouse aim/fire | E dock / gate | Esc pause | M mute</div>
+    <div class="keys" id="keys">WASD move | Shift turbo | Space or click fire (aim with mouse) | E dock / gate | Esc pause | M mute</div>
     <div class="win mapwin"><div class="wt">SECTOR MAP</div><canvas id="minimap" width="180" height="180"></canvas></div>`;
   root().appendChild(h);
 }
@@ -130,13 +131,10 @@ export const hud = {
     setText('v-cargo', `${used}/${s.cargoMax}`);
     el('b-fuel').classList.toggle('low', s.fuel / s.fuelMax < 0.2);
     el('b-hull').classList.toggle('low', s.hull / s.hullMax < 0.3);
-    const parts = ORE_IDS.filter((o) => s.cargo[o] > 0).map(
-      (o) => `<span style="color:${ORES[o].css}">${ORES[o].name} ${s.cargo[o]}</span>`,
-    );
-    const cl = parts.join('') || '<span class="dim">empty</span>';
-    if (cache.get('cl') !== cl) {
-      cache.set('cl', cl);
-      el('cargo-list').innerHTML = cl;
+    for (const o of ORE_IDS) {
+      const slot = el(`slot-${o}`);
+      slot.classList.toggle('has', s.cargo[o] > 0);
+      (slot.querySelector('.n') as HTMLElement).textContent = s.cargo[o] > 0 ? String(s.cargo[o]) : '';
     }
     setText('money', money(s.money));
     const sec = SECTORS[s.sector];
@@ -274,7 +272,7 @@ export function showMenu(save: SaveData | null, onContinue: () => void, onNew: (
         ${info}
         <ul class="how">
           <li><b>WASD</b> thrust (you drift - plan your stops)</li>
-          <li><b>Mouse</b> aim, <b>hold left button</b> to fire the mining cannon</li>
+          <li><b>Mouse</b> aim, <b>Space</b> or <b>left button</b> fires, <b>Shift</b> is turbo (burns fuel fast)</li>
           <li><b>E</b> dock at the station to sell, repair and upgrade</li>
           <li>Watch the market, take contracts, hire drones, beat the pirates</li>
           <li>Meet each sector's quota to open the warp gate. Four sectors, one Dreadnought.</li>
