@@ -46,6 +46,14 @@ npm test
 npm run dev
 ```
 
-For a persistent deployment, configure `backend/.env` and run `docker compose -f backend/compose.yaml up --build` from the repository root. Set `ALLOWED_ORIGINS` to the exact frontend origin(s). The backend must be hosted separately from GitHub Pages and exposed over HTTPS/WSS in production.
+Locally the backend uses an embedded Postgres in `backend/data`, so no database setup is needed.
+
+### Deploying on Render
+
+[`render.yaml`](render.yaml) describes the web service and its Postgres database. In the Render dashboard choose New, then Blueprint, and pick this repository. Pushes to `main` redeploy it.
+
+On the free plan the service sleeps after 15 idle minutes (the next request takes about a minute), and the database expires 30 days after it is created unless upgraded.
+
+It can also run on any persistent host with `docker compose -f backend/compose.yaml up --build`.
 
 To connect the GitHub Pages frontend, set the repository Actions variables `VITE_API_URL` and `VITE_WS_URL` to the backend HTTPS and WSS base URLs. The Pages workflow injects these at build time; without them, AI play remains available and online features report that the backend is unavailable.

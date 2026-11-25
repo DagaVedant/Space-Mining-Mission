@@ -6,7 +6,7 @@ RUN npm ci --omit=dev
 COPY src ./src
 
 ENV PORT=3001
-ENV DATABASE_PATH=/data/asteroid-breaker.sqlite
+ENV DATABASE_PATH=/data/pglite
 EXPOSE 3001
 VOLUME ["/data"]
 

@@ -3,7 +3,7 @@ services:
     build: .
     env_file: .env
     environment:
-      DATABASE_PATH: /data/asteroid-breaker.sqlite
+      DATABASE_PATH: /data/pglite
     ports:
       - "3001:3001"
     volumes:

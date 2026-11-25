@@ -1,70 +1,10 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import Database from 'better-sqlite3';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
 import { WebSocket, WebSocketServer } from 'ws';
+import { openDatabase, type Query } from './db.ts';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const databasePath = resolve(process.env.DATABASE_PATH ?? resolve(here, '../data/rockbreaker.sqlite'));
-mkdirSync(dirname(databasePath), { recursive: true });
-
-const db = new Database(databasePath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,
-    salt TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS sessions (
-    token_hash TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS saves (
-    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    payload TEXT NOT NULL,
-    revision INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS player_stats (
-    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    wins INTEGER NOT NULL DEFAULT 0,
-    losses INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE TABLE IF NOT EXISTS matches (
-    id TEXT PRIMARY KEY,
-    winner_id TEXT NOT NULL REFERENCES users(id),
-    loser_id TEXT NOT NULL REFERENCES users(id),
-    duration_seconds INTEGER NOT NULL,
-    created_at INTEGER NOT NULL,
-    ranked INTEGER NOT NULL DEFAULT 0,
-    winner_rating_delta INTEGER NOT NULL DEFAULT 0,
-    loser_rating_delta INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE TABLE IF NOT EXISTS pvp_ratings (
-    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    rating INTEGER NOT NULL DEFAULT 1000,
-    season_key TEXT NOT NULL,
-    season_rating INTEGER NOT NULL DEFAULT 1000,
-    updated_at INTEGER NOT NULL
-  );
-`);
-
-const matchColumns = new Set((db.pragma('table_info(matches)') as { name: string }[]).map((column) => column.name));
-for (const [name, definition] of [
-  ['ranked', 'INTEGER NOT NULL DEFAULT 0'],
-  ['winner_rating_delta', 'INTEGER NOT NULL DEFAULT 0'],
-  ['loser_rating_delta', 'INTEGER NOT NULL DEFAULT 0'],
-] as const) {
-  if (!matchColumns.has(name)) db.exec(`ALTER TABLE matches ADD COLUMN ${name} ${definition}`);
-}
+const db = await openDatabase();
 
 interface User {
   id: string;
@@ -93,6 +33,7 @@ interface ClientSocket extends WebSocket {
   queued?: boolean;
   ranked?: boolean;
   queuedAt?: number;
+  rating?: number;
   matchId?: string;
 }
 
@@ -138,6 +79,8 @@ interface Match {
 
 const app = express();
 app.disable('x-powered-by');
+// Render terminates TLS in a proxy; without this every player shares one rate-limit bucket
+if (process.env.RENDER) app.set('trust proxy', 1);
 app.use(helmet());
 app.use(express.json({ limit: '128kb' }));
 
@@ -174,23 +117,24 @@ interface RatingRow {
   season_rating: number;
 }
 
-function ratingFor(userId: string): RatingRow {
+async function ratingFor(userId: string, query: Query = db.query): Promise<RatingRow> {
   const season = currentSeason();
   const now = Date.now();
-  db.prepare(`
-    INSERT INTO pvp_ratings (user_id, rating, season_key, season_rating, updated_at)
-    VALUES (?, 1000, ?, 1000, ?)
-    ON CONFLICT(user_id) DO NOTHING
-  `).run(userId, season, now);
-  const row = db.prepare('SELECT rating, season_key, season_rating FROM pvp_ratings WHERE user_id = ?')
-    .get(userId) as RatingRow;
+  await query(
+    `INSERT INTO pvp_ratings (user_id, rating, season_key, season_rating, updated_at)
+     VALUES ($1, 1000, $2, 1000, $3)
+     ON CONFLICT(user_id) DO NOTHING`,
+    [userId, season, now],
+  );
+  const [row] = await query<RatingRow>('SELECT rating, season_key, season_rating FROM pvp_ratings WHERE user_id = $1', [userId]);
+  if (!row) throw new Error('Rating row is missing.');
   if (row.season_key !== season) {
-    db.prepare('UPDATE pvp_ratings SET season_key = ?, season_rating = 1000, updated_at = ? WHERE user_id = ?')
-      .run(season, now, userId);
+    await query('UPDATE pvp_ratings SET season_key = $1, season_rating = 1000, updated_at = $2 WHERE user_id = $3', [season, now, userId]);
     return { ...row, season_key: season, season_rating: 1000 };
   }
   return row;
 }
+
 function limitAuth(req: Request, res: Response, next: NextFunction): void {
   const key = req.ip ?? 'unknown';
   const now = Date.now();
@@ -212,33 +156,34 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function issueSession(user: User): string {
+async function issueSession(user: User): Promise<string> {
   const token = randomBytes(32).toString('base64url');
   const ttlDays = Math.min(90, Math.max(1, Number(process.env.SESSION_TTL_DAYS) || 30));
-  db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
-    .run(hashToken(token), user.id, Date.now() + ttlDays * 86_400_000);
+  await db.query('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)', [
+    hashToken(token),
+    user.id,
+    Date.now() + ttlDays * 86_400_000,
+  ]);
   return token;
 }
 
-function getUser(token: string | undefined): User | null {
+async function getUser(token: string | undefined): Promise<User | null> {
   if (!token) return null;
-  const row = db
-    .prepare(
-      `SELECT users.id, users.username
-       FROM sessions JOIN users ON sessions.user_id = users.id
-       WHERE sessions.token_hash = ? AND sessions.expires_at > ?`,
-    )
-    .get(hashToken(token), Date.now()) as User | undefined;
+  const [row] = await db.query<User>(
+    `SELECT users.id, users.username
+     FROM sessions JOIN users ON sessions.user_id = users.id
+     WHERE sessions.token_hash = $1 AND sessions.expires_at > $2`,
+    [hashToken(token), Date.now()],
+  );
   return row ?? null;
 }
 
-function bearer(req: Request): User | null {
-  const match = /^Bearer ([A-Za-z0-9_-]+)$/.exec(req.header('authorization') ?? '');
-  return getUser(match?.[1]);
+function bearerToken(req: Request): string | undefined {
+  return /^Bearer ([A-Za-z0-9_-]+)$/.exec(req.header('authorization') ?? '')?.[1];
 }
 
-function requireUser(req: Request, res: Response, next: NextFunction): void {
-  const user = bearer(req);
+async function requireUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const user = await getUser(bearerToken(req));
   if (!user) {
     res.status(401).json({ error: 'Sign in to use this feature.' });
     return;
@@ -247,13 +192,16 @@ function requireUser(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-function authResponse(res: Response, user: User): void {
-  res.json({ token: issueSession(user), user: { id: user.id, username: user.username } });
+async function authResponse(res: Response, user: User): Promise<void> {
+  res.json({ token: await issueSession(user), user: { id: user.id, username: user.username } });
 }
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
+app.get('/api/health', async (_req, res) => {
+  await db.query('SELECT 1');
+  res.json({ ok: true });
+});
 
-app.post('/api/auth/register', limitAuth, (req, res) => {
+app.post('/api/auth/register', limitAuth, async (req, res) => {
   const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   if (!/^[A-Za-z0-9_]{3,24}$/.test(username)) {
@@ -267,26 +215,34 @@ app.post('/api/auth/register', limitAuth, (req, res) => {
   const salt = randomBytes(16).toString('hex');
   const id = randomBytes(16).toString('hex');
   try {
-    db.prepare('INSERT INTO users (id, username, salt, password_hash, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(id, username, salt, scryptSync(password, salt, 64).toString('hex'), Date.now());
-    db.prepare('INSERT INTO player_stats (user_id) VALUES (?)').run(id);
-    ratingFor(id);
-    authResponse(res, { id, username });
+    await db.tx(async (query) => {
+      await query('INSERT INTO users (id, username, salt, password_hash, created_at) VALUES ($1, $2, $3, $4, $5)', [
+        id,
+        username,
+        salt,
+        scryptSync(password, salt, 64).toString('hex'),
+        Date.now(),
+      ]);
+      await query('INSERT INTO player_stats (user_id) VALUES ($1)', [id]);
+      await ratingFor(id, query);
+    });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+    if ((error as { code?: string }).code === '23505') {
       res.status(409).json({ error: 'That username is already taken.' });
       return;
     }
     throw error;
   }
+  await authResponse(res, { id, username });
 });
 
-app.post('/api/auth/login', limitAuth, (req, res) => {
+app.post('/api/auth/login', limitAuth, async (req, res) => {
   const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  const row = db
-    .prepare('SELECT id, username, salt, password_hash FROM users WHERE username = ?')
-    .get(username) as (User & { salt: string; password_hash: string }) | undefined;
+  const [row] = await db.query<User & { salt: string; password_hash: string }>(
+    'SELECT id, username, salt, password_hash FROM users WHERE username = $1',
+    [username],
+  );
   if (!row || password.length > 128) {
     res.status(401).json({ error: 'Invalid username or password.' });
     return;
@@ -297,12 +253,12 @@ app.post('/api/auth/login', limitAuth, (req, res) => {
     res.status(401).json({ error: 'Invalid username or password.' });
     return;
   }
-  authResponse(res, row);
+  await authResponse(res, row);
 });
 
-app.post('/api/auth/logout', requireUser, (req, res) => {
-  const token = /^Bearer ([A-Za-z0-9_-]+)$/.exec(req.header('authorization') ?? '')?.[1];
-  if (token) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(token));
+app.post('/api/auth/logout', requireUser, async (req, res) => {
+  const token = bearerToken(req);
+  if (token) await db.query('DELETE FROM sessions WHERE token_hash = $1', [hashToken(token)]);
   res.sendStatus(204);
 });
 
@@ -337,11 +293,9 @@ function isSavePayload(value: unknown): value is SavePayload {
   );
 }
 
-app.get('/api/save', requireUser, (_req, res) => {
+app.get('/api/save', requireUser, async (_req, res) => {
   const user = res.locals.user as User;
-  const row = db.prepare('SELECT payload, revision, updated_at FROM saves WHERE user_id = ?').get(user.id) as
-    | SaveRow
-    | undefined;
+  const [row] = await db.query<SaveRow>('SELECT payload, revision, updated_at FROM saves WHERE user_id = $1', [user.id]);
   if (!row) {
     res.status(404).json({ error: 'No cloud save exists for this account.' });
     return;
@@ -349,7 +303,7 @@ app.get('/api/save', requireUser, (_req, res) => {
   res.json({ save: JSON.parse(row.payload), revision: row.revision, updatedAt: row.updated_at });
 });
 
-app.put('/api/save', requireUser, (req, res) => {
+app.put('/api/save', requireUser, async (req, res) => {
   const user = res.locals.user as User;
   const { save, revision } = req.body ?? {};
   if (!isSavePayload(save) || JSON.stringify(save).length > 96_000) {
@@ -360,42 +314,44 @@ app.put('/api/save', requireUser, (req, res) => {
     res.status(400).json({ error: 'A valid cloud revision is required.' });
     return;
   }
-  const current = db.prepare('SELECT revision FROM saves WHERE user_id = ?').get(user.id) as
-    | { revision: number }
-    | undefined;
-  const currentRevision = current?.revision ?? 0;
-  if (revision !== currentRevision) {
-    res.status(409).json({ error: 'Cloud save changed on another device.', revision: currentRevision });
+  const now = Date.now();
+  const payload = JSON.stringify(save);
+  // single statements, so two devices saving at once cannot both win
+  const [written] =
+    revision === 0
+      ? await db.query<{ revision: number }>(
+          'INSERT INTO saves (user_id, payload, revision, updated_at) VALUES ($1, $2, 1, $3) ON CONFLICT(user_id) DO NOTHING RETURNING revision',
+          [user.id, payload, now],
+        )
+      : await db.query<{ revision: number }>(
+          'UPDATE saves SET payload = $2, revision = revision + 1, updated_at = $3 WHERE user_id = $1 AND revision = $4 RETURNING revision',
+          [user.id, payload, now, revision],
+        );
+  if (!written) {
+    const [current] = await db.query<{ revision: number }>('SELECT revision FROM saves WHERE user_id = $1', [user.id]);
+    res.status(409).json({ error: 'Cloud save changed on another device.', revision: current?.revision ?? 0 });
     return;
   }
-  const nextRevision = currentRevision + 1;
-  const now = Date.now();
-  db.prepare(`
-    INSERT INTO saves (user_id, payload, revision, updated_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET payload = excluded.payload,
-      revision = excluded.revision, updated_at = excluded.updated_at
-  `).run(user.id, JSON.stringify(save), nextRevision, now);
-  res.json({ revision: nextRevision, updatedAt: now });
+  res.json({ revision: written.revision, updatedAt: now });
 });
 
-app.get('/api/pvp/stats', requireUser, (_req, res) => {
+app.get('/api/pvp/stats', requireUser, async (_req, res) => {
   const user = res.locals.user as User;
-  const stats = db.prepare('SELECT wins, losses FROM player_stats WHERE user_id = ?').get(user.id) as
-    | { wins: number; losses: number }
-    | undefined;
-  const rating = ratingFor(user.id);
+  const [stats] = await db.query<{ wins: number; losses: number }>('SELECT wins, losses FROM player_stats WHERE user_id = $1', [user.id]);
+  const rating = await ratingFor(user.id);
   res.json({ ...(stats ?? { wins: 0, losses: 0 }), rating: rating.rating, seasonRating: rating.season_rating, season: rating.season_key });
 });
 
-app.get('/api/pvp/leaderboard', requireUser, (_req, res) => {
+app.get('/api/pvp/leaderboard', requireUser, async (_req, res) => {
   const season = currentSeason();
-  const rows = db.prepare(`
-    SELECT users.username, pvp_ratings.season_rating AS rating
-    FROM pvp_ratings JOIN users ON users.id = pvp_ratings.user_id
-    WHERE pvp_ratings.season_key = ?
-    ORDER BY pvp_ratings.season_rating DESC, pvp_ratings.updated_at ASC
-    LIMIT 20
-  `).all(season) as { username: string; rating: number }[];
+  const rows = await db.query<{ username: string; rating: number }>(
+    `SELECT users.username, pvp_ratings.season_rating AS rating
+     FROM pvp_ratings JOIN users ON users.id = pvp_ratings.user_id
+     WHERE pvp_ratings.season_key = $1
+     ORDER BY pvp_ratings.season_rating DESC, pvp_ratings.updated_at ASC
+     LIMIT 20`,
+    [season],
+  );
   res.json({ season, players: rows.map((row, index) => ({ rank: index + 1, ...row })) });
 });
 
@@ -410,40 +366,49 @@ const matches = new Map<string, Match>();
 const WORLD = { width: 1500, height: 900 };
 const STEP = 1 / 20;
 
+function report(error: unknown): void {
+  console.error('Backend task failed.', error);
+}
+
 function send(socket: WebSocket, data: object): void {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(data));
 }
 
-function recordMatchResult(match: Match, winner: Combatant, loser: Combatant): { duration: number; ratingChange: number } {
+async function recordMatchResult(match: Match, winner: Combatant, loser: Combatant): Promise<{ duration: number; ratingChange: number }> {
   const duration = Math.max(1, Math.floor((Date.now() - match.startedAt) / 1000));
   let ratingChange = 0;
-  const saveResult = db.transaction(() => {
+  await db.tx(async (query) => {
     if (match.ranked) {
-      const winnerRating = ratingFor(winner.id);
-      const loserRating = ratingFor(loser.id);
+      const winnerRating = await ratingFor(winner.id, query);
+      const loserRating = await ratingFor(loser.id, query);
       const expected = 1 / (1 + Math.pow(10, (loserRating.season_rating - winnerRating.season_rating) / 400));
       ratingChange = Math.max(1, Math.round(32 * (1 - expected)));
-      const winnerAllTime = Math.max(100, winnerRating.rating + ratingChange);
-      const loserAllTime = Math.max(100, loserRating.rating - ratingChange);
-      const winnerSeason = Math.max(100, winnerRating.season_rating + ratingChange);
-      const loserSeason = Math.max(100, loserRating.season_rating - ratingChange);
-      db.prepare('UPDATE pvp_ratings SET rating = ?, season_rating = ?, updated_at = ? WHERE user_id = ?')
-        .run(winnerAllTime, winnerSeason, Date.now(), winner.id);
-      db.prepare('UPDATE pvp_ratings SET rating = ?, season_rating = ?, updated_at = ? WHERE user_id = ?')
-        .run(loserAllTime, loserSeason, Date.now(), loser.id);
+      const update = 'UPDATE pvp_ratings SET rating = $1, season_rating = $2, updated_at = $3 WHERE user_id = $4';
+      await query(update, [
+        Math.max(100, winnerRating.rating + ratingChange),
+        Math.max(100, winnerRating.season_rating + ratingChange),
+        Date.now(),
+        winner.id,
+      ]);
+      await query(update, [
+        Math.max(100, loserRating.rating - ratingChange),
+        Math.max(100, loserRating.season_rating - ratingChange),
+        Date.now(),
+        loser.id,
+      ]);
     }
-    db.prepare(`
-      INSERT INTO matches (id, winner_id, loser_id, duration_seconds, created_at, ranked, winner_rating_delta, loser_rating_delta)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(match.id, winner.id, loser.id, duration, Date.now(), Number(match.ranked), ratingChange, -ratingChange);
-    db.prepare('UPDATE player_stats SET wins = wins + 1 WHERE user_id = ?').run(winner.id);
-    db.prepare('UPDATE player_stats SET losses = losses + 1 WHERE user_id = ?').run(loser.id);
+    await query(
+      `INSERT INTO matches (id, winner_id, loser_id, duration_seconds, created_at, ranked, winner_rating_delta, loser_rating_delta)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [match.id, winner.id, loser.id, duration, Date.now(), Number(match.ranked), ratingChange, -ratingChange],
+    );
+    await query('UPDATE player_stats SET wins = wins + 1 WHERE user_id = $1', [winner.id]);
+    await query('UPDATE player_stats SET losses = losses + 1 WHERE user_id = $1', [loser.id]);
   });
-  saveResult();
   return { duration, ratingChange };
 }
 
-function cleanSocket(socket: ClientSocket): void {
+async function cleanSocket(socket: ClientSocket): Promise<void> {
   const waitingIndex = waiting.indexOf(socket);
   if (waitingIndex >= 0) waiting.splice(waitingIndex, 1);
   socket.queued = false;
@@ -452,8 +417,13 @@ function cleanSocket(socket: ClientSocket): void {
   if (!match || match.ended) return;
   const other = match.players.find((player) => player.socket !== socket);
   const quitter = match.players.find((player) => player.socket === socket);
+  // close the match before awaiting, so nothing else can finish it twice
+  match.ended = true;
+  matches.delete(match.id);
+  socket.matchId = undefined;
+  if (other) other.socket.matchId = undefined;
   if (other && quitter) {
-    const result = recordMatchResult(match, other, quitter);
+    const result = await recordMatchResult(match, other, quitter);
     send(other.socket, {
       type: 'match-ended',
       reason: 'opponent-disconnected',
@@ -463,10 +433,6 @@ function cleanSocket(socket: ClientSocket): void {
       ratingChange: result.ratingChange,
     });
   }
-  match.ended = true;
-  matches.delete(match.id);
-  socket.matchId = undefined;
-  if (other) other.socket.matchId = undefined;
 }
 
 function startMatch(first: ClientSocket, second: ClientSocket, ranked: boolean): void {
@@ -484,18 +450,20 @@ function startMatch(first: ClientSocket, second: ClientSocket, ranked: boolean):
   second.matchId = id;
   first.queued = false;
   second.queued = false;
-  const firstRating = ranked ? ratingFor(one.id).season_rating : null;
-  const secondRating = ranked ? ratingFor(two.id).season_rating : null;
+  const firstRating = ranked ? (first.rating ?? 1000) : null;
+  const secondRating = ranked ? (second.rating ?? 1000) : null;
   send(first, { type: 'match-found', matchId: id, playerId: one.id, opponent: two.username, world: WORLD, ranked, rating: firstRating, opponentRating: secondRating });
   send(second, { type: 'match-found', matchId: id, playerId: two.id, opponent: one.username, world: WORLD, ranked, rating: secondRating, opponentRating: firstRating });
 }
 
-function finishMatch(match: Match, winner: Combatant, reason: string): void {
+async function finishMatch(match: Match, winner: Combatant, reason: string): Promise<void> {
   if (match.ended) return;
   match.ended = true;
+  matches.delete(match.id);
   const loser = match.players.find((player) => player !== winner);
   if (!loser) return;
-  const result = recordMatchResult(match, winner, loser);
+  for (const player of match.players) player.socket.matchId = undefined;
+  const result = await recordMatchResult(match, winner, loser);
   for (const player of match.players) {
     const won = player.id === winner.id;
     send(player.socket, {
@@ -506,9 +474,7 @@ function finishMatch(match: Match, winner: Combatant, reason: string): void {
       ranked: match.ranked,
       ratingChange: match.ranked ? (won ? result.ratingChange : -result.ratingChange) : 0,
     });
-    player.socket.matchId = undefined;
   }
-  matches.delete(match.id);
 }
 
 function updateMatch(match: Match): void {
@@ -550,7 +516,7 @@ function updateMatch(match: Match): void {
       target.hp -= 18;
       shot.life = 0;
       if (target.hp <= 0) {
-        finishMatch(match, shot.owner === a.id ? a : b, 'destroyed');
+        finishMatch(match, shot.owner === a.id ? a : b, 'destroyed').catch(report);
         return;
       }
     }
@@ -564,7 +530,7 @@ function updateMatch(match: Match): void {
   for (const player of match.players) send(player.socket, snapshot);
 }
 
-function handleMessage(socket: ClientSocket, raw: string): void {
+async function handleMessage(socket: ClientSocket, raw: string): Promise<void> {
   let message: Record<string, unknown>;
   try {
     const value: unknown = JSON.parse(raw);
@@ -580,7 +546,7 @@ function handleMessage(socket: ClientSocket, raw: string): void {
       socket.close(4001, 'authentication-required');
       return;
     }
-    const user = getUser(message.token);
+    const user = await getUser(message.token);
     if (!user) {
       send(socket, { type: 'error', message: 'Session expired. Sign in again.' });
       socket.close(4001, 'invalid-session');
@@ -597,11 +563,13 @@ function handleMessage(socket: ClientSocket, raw: string): void {
   if (message.type === 'queue') {
     if (socket.matchId || socket.queued) return;
     const ranked = message.ranked === true;
-    const playerRating = ranked ? ratingFor(socket.user.id).season_rating : 0;
+    // look the rating up first: the search and enqueue below must run without an await between them
+    const playerRating = ranked ? (await ratingFor(socket.user.id)).season_rating : 0;
+    socket.rating = playerRating;
     const opponentIndex = waiting.findIndex((entry) => {
       if (entry === socket || entry.user?.id === socket.user?.id || entry.readyState !== WebSocket.OPEN || entry.ranked !== ranked) return false;
       if (!ranked) return true;
-      const opponentRating = entry.user ? ratingFor(entry.user.id).season_rating : 1000;
+      const opponentRating = entry.rating ?? 1000;
       const waitSeconds = Math.max(0, Date.now() - (entry.queuedAt ?? Date.now())) / 1000;
       const allowedGap = Math.min(800, 150 + Math.floor(waitSeconds / 10) * 100);
       return Math.abs(playerRating - opponentRating) <= allowedGap;
@@ -619,7 +587,7 @@ function handleMessage(socket: ClientSocket, raw: string): void {
     return;
   }
   if (message.type === 'leave-queue') {
-    cleanSocket(socket);
+    await cleanSocket(socket);
     send(socket, { type: 'queue-left' });
     return;
   }
@@ -653,15 +621,22 @@ wss.on('connection', (ws) => {
   const authTimer = setTimeout(() => {
     if (!socket.user) socket.close(4001, 'authentication-timeout');
   }, 5000);
-  socket.on('message', (data) => {
-    handleMessage(socket, data.toString());
-    if (socket.user) clearTimeout(authTimer);
-  });
+  // one message at a time per socket, so a queue request cannot overtake authentication
+  let tail: Promise<void> = Promise.resolve();
+  const then = (task: () => Promise<void>): void => {
+    tail = tail.then(task).catch(report);
+  };
+  socket.on('message', (data) =>
+    then(async () => {
+      await handleMessage(socket, data.toString());
+      if (socket.user) clearTimeout(authTimer);
+    }),
+  );
   socket.on('close', () => {
     clearTimeout(authTimer);
-    cleanSocket(socket);
+    then(() => cleanSocket(socket));
   });
-  socket.on('error', () => cleanSocket(socket));
+  socket.on('error', report);
 });
 
 setInterval(() => {
@@ -671,8 +646,7 @@ setInterval(() => {
 function shutdown(): void {
   for (const socket of wss.clients) socket.close(1001, 'server-shutdown');
   server.close(() => {
-    db.close();
-    process.exit(0);
+    db.close().finally(() => process.exit(0));
   });
 }
 
