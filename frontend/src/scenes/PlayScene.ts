@@ -1095,15 +1095,23 @@ export class PlayScene extends Phaser.Scene {
     sfx.thrust(thrusting ? 0.5 + (this.fuel > 0 ? 0.5 : 0) : 0);
 
     const ptr = this.input.activePointer;
-    const w = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
-    p.rotation = Math.atan2(w.y - p.y, w.x - p.x);
+    if (ptr.leftButtonDown()) {
+      // firing: aim at the mouse
+      const w = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
+      p.rotation = Math.atan2(w.y - p.y, w.x - p.x);
+    } else if (thrusting) {
+      // otherwise the nose swings toward the direction you are flying
+      p.rotation = Phaser.Math.Angle.RotateTo(p.rotation, Math.atan2(ay, ax), 10 * dt);
+    }
 
     if (thrusting) {
+      const fx = Math.cos(p.rotation);
+      const fy = Math.sin(p.rotation);
       this.flame.setVisible(true);
-      this.flame.setRotation(Math.atan2(ay, ax));
-      this.flame.setPosition(p.x - ax * 14, p.y - ay * 14);
+      this.flame.setRotation(p.rotation);
+      this.flame.setPosition(p.x - fx * 14, p.y - fy * 14);
       this.flame.setScale(0.7 + Math.random() * 0.5, 0.8 + Math.random() * 0.3);
-      this.exhaust.emitParticleAt(p.x - ax * 22, p.y - ay * 22, 1);
+      this.exhaust.emitParticleAt(p.x - fx * 22, p.y - fy * 22, 1);
     } else {
       this.flame.setVisible(false);
     }
@@ -1170,11 +1178,14 @@ export class PlayScene extends Phaser.Scene {
       if (this.dead) continue;
       const d = Phaser.Math.Distance.Between(c.x, c.y, p.x, p.y);
       const b = c.body as Body;
-      if (d < this.stats.magnet && space > 0) {
+      const reach = this.stats.magnet + 260;
+      if (d < reach && space > 0) {
+        // ore homes in on the ship: steer velocity toward it, faster when closer
         const a = Math.atan2(p.y - c.y, p.x - c.x);
-        const pull = 1400 * (1 - d / (this.stats.magnet * 1.2));
-        b.velocity.x += Math.cos(a) * pull * dt;
-        b.velocity.y += Math.sin(a) * pull * dt;
+        const want = 260 + 520 * (1 - d / reach);
+        const k = Math.min(1, 6 * dt);
+        b.velocity.x += (Math.cos(a) * want - b.velocity.x) * k;
+        b.velocity.y += (Math.sin(a) * want - b.velocity.y) * k;
       }
       if (d < 28) {
         if (space > 0) {

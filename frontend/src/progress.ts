@@ -117,7 +117,7 @@ export function makeContract(sector: number, now: number, rng: Rng): Contract {
   const options = ORE_IDS.filter((o) => weights[o] > 0);
   const ore = options[Math.floor(rng() * options.length)];
   const qty = 6 + Math.floor(rng() * (6 + sector * 4));
-  const reward = Math.round(qty * ORES[ore].base * (1.7 + rng() * 0.6));
+  const reward = Math.round(qty * ORES[ore].base * (1.15 + rng() * 0.25));
   return { id: nextContractId++, ore, qty, reward, deadline: now + 240 + rng() * 120 };
 }
 

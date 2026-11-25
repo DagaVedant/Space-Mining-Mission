@@ -85,25 +85,22 @@ function buildHud(): void {
   h.innerHTML = `
     <div id="hurt"></div>
     <div id="flare"></div>
-    <div class="panel hud-left">
-      <div class="bar"><span>HULL</span><div class="track"><i id="b-hull" class="hull"></i></div><b id="v-hull"></b></div>
-      <div class="bar"><span>FUEL</span><div class="track"><i id="b-fuel" class="fuel"></i></div><b id="v-fuel"></b></div>
-      <div class="bar"><span>HOLD</span><div class="track"><i id="b-cargo" class="cargo"></i></div><b id="v-cargo"></b></div>
-      <div id="cargo-list"></div>
+    <div id="bar">
+      <div class="cell cash"><label>CASH</label><b id="money" class="lcd"></b></div>
+      <div class="cell goalc"><label id="sector-name"></label><div class="track goal"><i id="b-goal"></i></div><small id="goal-text"></small></div>
+      <div class="cell"><label>HULL <b id="v-hull"></b></label><div class="track"><i id="b-hull" class="hull"></i></div></div>
+      <div class="cell"><label>FUEL <b id="v-fuel"></b></label><div class="track"><i id="b-fuel" class="fuel"></i></div></div>
+      <div class="cell"><label>HOLD <b id="v-cargo"></b></label><div class="track"><i id="b-cargo" class="cargo"></i></div></div>
+      <div class="cell grow"><label>CARGO</label><div id="cargo-list"></div></div>
     </div>
-    <div class="panel hud-top">
-      <div class="sector"><span id="sector-name"></span><b id="money"></b></div>
-      <div class="track goal"><i id="b-goal"></i></div>
-      <div class="goal-text" id="goal-text"></div>
-    </div>
-    <div class="panel hud-right" id="contracts-panel"><h4>CONTRACTS</h4><div id="contracts"></div></div>
+    <div class="win contracts"><div class="wt">CONTRACTS</div><div class="wb" id="contracts"></div></div>
     <div id="bossbar" class="hidden"><span>DREADNOUGHT</span><div class="track"><i id="b-boss"></i></div></div>
     <div id="banner" class="hidden"></div>
     <div id="toasts"></div>
     <div id="hint" class="hidden"></div>
-    <div class="panel ticker" id="ticker"></div>
-    <div class="panel keys" id="keys">WASD move &nbsp; Mouse aim/fire &nbsp; E dock / gate &nbsp; Esc pause &nbsp; M mute</div>
-    <canvas id="minimap" width="180" height="180"></canvas>`;
+    <div id="pricebar"><div class="pl">ORE PRICES</div><div id="ticker"></div></div>
+    <div class="keys" id="keys">WASD move | Mouse aim/fire | E dock / gate | Esc pause | M mute</div>
+    <div class="win mapwin"><div class="wt">SECTOR MAP</div><canvas id="minimap" width="180" height="180"></canvas></div>`;
   root().appendChild(h);
 }
 
@@ -136,16 +133,16 @@ export const hud = {
     const parts = ORE_IDS.filter((o) => s.cargo[o] > 0).map(
       (o) => `<span style="color:${ORES[o].css}">${ORES[o].name} ${s.cargo[o]}</span>`,
     );
-    const cl = parts.join('') || '<span class="dim">Hold empty</span>';
+    const cl = parts.join('') || '<span class="dim">empty</span>';
     if (cache.get('cl') !== cl) {
       cache.set('cl', cl);
       el('cargo-list').innerHTML = cl;
     }
     setText('money', money(s.money));
     const sec = SECTORS[s.sector];
-    setText('sector-name', `SECTOR ${s.sector + 1} - ${sec.name.toUpperCase()}`);
+    setText('sector-name', `SECTOR ${s.sector + 1}: ${sec.name.toUpperCase()}`);
     setWidth('b-goal', (s.earned / s.goal) * 100);
-    setText('goal-text', s.earned >= s.goal ? 'Goal reached' : `Earn ${money(s.goal - s.earned)} more to open the way`);
+    setText('goal-text', s.earned >= s.goal ? 'Quota met' : `Quota ${money(s.earned)} / ${money(s.goal)}`);
     const cs = s.contracts
       .map((c) => {
         const left = Math.max(0, Math.round(c.deadline - s.clock));
@@ -154,7 +151,7 @@ export const hud = {
         return `<div class="ct"><b style="color:${ORES[c.ore].css}">${c.qty} ${ORES[c.ore].name}</b><span>${money(c.reward)}</span><em>${m}:${sc}</em></div>`;
       })
       .join('');
-    const csh = cs || '<div class="dim">None - pick some up at the station</div>';
+    const csh = cs || '<div class="empty">No active contracts. Pick some up at the station.</div>';
     if (cache.get('ct') !== csh) {
       cache.set('ct', csh);
       el('contracts').innerHTML = csh;
@@ -245,7 +242,7 @@ export function showOverlay(title: string, body: string, buttons: OverlayButton[
   closeOverlay();
   const o = document.createElement('div');
   o.className = 'overlay';
-  o.innerHTML = `<div class="card"><h2>${title}</h2><p>${body}</p>${extra}<div class="btns"></div></div>`;
+  o.innerHTML = `<div class="win card"><div class="wt">${title}</div><div class="wb"><p>${body}</p>${extra}<div class="btns"></div></div></div>`;
   const box = o.querySelector('.btns') as HTMLElement;
   for (const b of buttons) {
     const btn = document.createElement('button');
@@ -265,22 +262,24 @@ export function showMenu(save: SaveData | null, onContinue: () => void, onNew: (
   o.className = 'menu';
   const upgrades = save ? Object.values(save.levels).reduce((a, b) => a + b, 0) : 0;
   const info = save
-    ? `<div class="save">Saved run: Sector ${save.sector + 1} (${SECTORS[save.sector].name}), ${money(save.money)}, ${upgrades} upgrades</div>`
+    ? `<div class="save">Saved run: Sector ${save.sector + 1} (${SECTORS[save.sector].name}) | Cash ${money(save.money)} | ${upgrades} upgrades</div>`
     : '';
   o.innerHTML = `
-    <div class="menu-body">
-      <div class="tag">MINING CONTRACT 7 / OUTER BELT</div>
-      <h1>ROCKBREAKER</h1>
-      <p class="sub">Crack the rocks. Sell the ore. Outgrow the belt.</p>
-      <div class="btns"></div>
-      ${info}
-      <ul class="how">
-        <li><b>WASD</b> thrust (you drift - plan your stops)</li>
-        <li><b>Mouse</b> aim, <b>hold left button</b> to fire the mining cannon</li>
-        <li><b>E</b> dock at the station to sell, repair and upgrade</li>
-        <li>Watch the market, take contracts, hire drones, beat the pirates</li>
-        <li>Earn enough to open the warp gate. Four sectors, one Dreadnought.</li>
-      </ul>
+    <div class="win menu-body">
+      <div class="wt">ROCKBREAKER MINING CO. - OUTER BELT OPERATIONS</div>
+      <div class="wb">
+        <h1>ROCKBREAKER</h1>
+        <p class="sub">Crack the rocks. Sell the ore. Outgrow the belt.</p>
+        <div class="btns"></div>
+        ${info}
+        <ul class="how">
+          <li><b>WASD</b> thrust (you drift - plan your stops)</li>
+          <li><b>Mouse</b> aim, <b>hold left button</b> to fire the mining cannon</li>
+          <li><b>E</b> dock at the station to sell, repair and upgrade</li>
+          <li>Watch the market, take contracts, hire drones, beat the pirates</li>
+          <li>Meet each sector's quota to open the warp gate. Four sectors, one Dreadnought.</li>
+        </ul>
+      </div>
     </div>`;
   const box = o.querySelector('.btns') as HTMLElement;
   if (save) {
@@ -311,6 +310,16 @@ function pips(level: number, max: number): string {
   return `<span class="pips">${s}</span>`;
 }
 
+type Tab = 'market' | 'upgrades' | 'contracts';
+let tab: Tab = 'market';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'market', label: 'Market' },
+  { id: 'upgrades', label: 'Upgrades' },
+  { id: 'contracts', label: 'Contracts' },
+];
+
+const mmss = (s: number): string => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
 function renderShop(): void {
   const api = shopApi;
   if (!api) return;
@@ -323,80 +332,112 @@ function renderShop(): void {
   const fuel = api.fuel();
   const clock = api.clock();
   const sector = save.sector;
-  let holdValue = 0;
-  const rows = ORE_IDS.map((o) => {
-    const p = api.market.prices[o];
-    holdValue += p * cargo[o];
-    const ch = ((p - api.market.prev[o]) / api.market.prev[o]) * 100;
-    const cls = ch > 0.4 ? 'up' : ch < -0.4 ? 'down' : '';
-    const ev = api.market.events.find((e) => e.ore === o);
-    return `<tr>
-      <td><i class="sw" style="background:${ORES[o].css}"></i>${ORES[o].name}${ev ? `<small class="evtag">${ev.label.split(':')[0]}</small>` : ''}</td>
-      <td class="num">${money(priceOf(api.market, o))} <em class="${cls}">${ch > 0.4 ? '+' : ''}${ch.toFixed(0)}%</em></td>
-      <td class="num">${cargo[o]}</td>
-      <td><button data-act="sell" data-id="${o}" ${cargo[o] ? '' : 'disabled'}>Sell</button></td>
-    </tr>`;
-  }).join('');
-  const hullMissing = Math.ceil(stats.hullMax - hull);
-  const fuelMissing = Math.ceil(stats.fuelMax - fuel);
-  const rc = repairCost(hullMissing, sector);
-  const fc = refuelCost(fuelMissing, sector);
-  const ups = UPGRADES.map((u) => {
-    const lvl = save.levels[u.id];
-    const maxed = lvl >= u.max;
-    const cost = maxed ? 0 : upgradeCost(u.id, lvl);
-    return `<div class="up">
-      <div class="up-h"><b>${u.name}</b>${pips(lvl, u.max)}</div>
-      <p>${u.desc}</p>
-      <button data-act="buy" data-id="${u.id}" ${maxed || !canBuyUpgrade(save, u.id) ? 'disabled' : ''}>${maxed ? 'MAX' : 'Buy ' + money(cost)}</button>
-    </div>`;
-  }).join('');
+  const sec = SECTORS[sector];
   const act = api.active();
   const offers = api.offers();
-  const ctRow = (c: Contract, mode: 'active' | 'offer'): string => {
-    const left = Math.max(0, Math.round(c.deadline - clock));
-    const have = cargo[c.ore];
-    const btn =
-      mode === 'offer'
-        ? `<button data-act="accept" data-id="${c.id}" ${act.length >= 2 ? 'disabled' : ''}>Accept</button>`
-        : have >= c.qty
-          ? `<button data-act="deliver" class="primary">Deliver</button>`
-          : `<span class="dim">${have}/${c.qty}</span>`;
-    return `<div class="ctr"><div><b style="color:${ORES[c.ore].css}">${c.qty} ${ORES[c.ore].name}</b><small>${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</small></div><span class="num">${money(c.reward)}</span>${btn}</div>`;
-  };
-  const sec = SECTORS[sector];
+
+  let body: string;
+  if (tab === 'market') {
+    let holdValue = 0;
+    const rows = ORE_IDS.map((o) => {
+      const p = api.market.prices[o];
+      holdValue += p * cargo[o];
+      const ch = ((p - api.market.prev[o]) / api.market.prev[o]) * 100;
+      const cls = ch > 0.4 ? 'up' : ch < -0.4 ? 'down' : '';
+      const ev = api.market.events.find((e) => e.ore === o);
+      return `<tr>
+        <td><i class="sw" style="background:${ORES[o].css}"></i>${ORES[o].name}${ev ? `<small class="evtag">${ev.label.split(':')[0]}</small>` : ''}</td>
+        <td class="num">${money(p)}</td>
+        <td class="num"><em class="${cls}">${ch > 0.4 ? '+' : ''}${ch.toFixed(0)}%</em></td>
+        <td class="num">${cargo[o]}</td>
+        <td class="num">${money(p * cargo[o])}</td>
+        <td class="r"><button data-act="sell" data-id="${o}" ${cargo[o] ? '' : 'disabled'}>Sell</button></td>
+      </tr>`;
+    }).join('');
+    const hullMissing = Math.ceil(stats.hullMax - hull);
+    const fuelMissing = Math.ceil(stats.fuelMax - fuel);
+    const rc = repairCost(hullMissing, sector);
+    const fc = refuelCost(fuelMissing, sector);
+    body = `
+      <div class="sub-h">Ore buyers</div>
+      <table class="grid">
+        <thead><tr><th>Ore</th><th class="num">Price</th><th class="num">Trend</th><th class="num">Hold</th><th class="num">Value</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td colspan="4">Total cargo value</td><td class="num">${money(holdValue)}</td><td class="r"><button class="primary" data-act="sellall" ${cargoTotal(cargo) ? '' : 'disabled'}>Sell all</button></td></tr></tfoot>
+      </table>
+      <div class="sub-h">Ship service</div>
+      <table class="grid">
+        <thead><tr><th>System</th><th class="num">Level</th><th class="num">Cost</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>Hull</td><td class="num">${Math.ceil(hull)} / ${stats.hullMax}</td><td class="num">${hullMissing > 0 ? money(rc) : '-'}</td><td class="r"><button data-act="repair" ${hullMissing > 0 && save.money >= 1 ? '' : 'disabled'}>Repair</button></td></tr>
+          <tr><td>Fuel</td><td class="num">${Math.ceil(fuel)} / ${stats.fuelMax}</td><td class="num">${fuelMissing > 0 ? money(fc) : '-'}</td><td class="r"><button data-act="refuel" ${fuelMissing > 0 && save.money >= 1 ? '' : 'disabled'}>Refuel</button></td></tr>
+        </tbody>
+        <tfoot><tr><td colspan="2">Full service</td><td class="num">${money(rc + fc)}</td><td class="r"><button data-act="service" ${hullMissing + fuelMissing > 0 ? '' : 'disabled'}>Do both</button></td></tr></tfoot>
+      </table>`;
+  } else if (tab === 'upgrades') {
+    const rows = UPGRADES.map((u) => {
+      const lvl = save.levels[u.id];
+      const maxed = lvl >= u.max;
+      const cost = maxed ? 0 : upgradeCost(u.id, lvl);
+      return `<tr>
+        <td><b>${u.name}</b></td>
+        <td class="desc">${u.desc}</td>
+        <td>${pips(lvl, u.max)}</td>
+        <td class="num">${maxed ? '-' : money(cost)}</td>
+        <td class="r"><button data-act="buy" data-id="${u.id}" ${maxed || !canBuyUpgrade(save, u.id) ? 'disabled' : ''}>${maxed ? 'Maxed' : 'Buy'}</button></td>
+      </tr>`;
+    }).join('');
+    body = `<table class="grid">
+      <thead><tr><th>Equipment</th><th>Effect</th><th>Level</th><th class="num">Cost</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  } else {
+    const row = (c: Contract, mode: 'active' | 'offer'): string => {
+      const left = Math.max(0, Math.round(c.deadline - clock));
+      const have = cargo[c.ore];
+      const btn =
+        mode === 'offer'
+          ? `<button data-act="accept" data-id="${c.id}" ${act.length >= 2 ? 'disabled' : ''}>Accept</button>`
+          : have >= c.qty
+            ? `<button class="primary" data-act="deliver">Deliver</button>`
+            : `<span class="dim">${have} / ${c.qty} held</span>`;
+      return `<tr>
+        <td><i class="sw" style="background:${ORES[c.ore].css}"></i>${ORES[c.ore].name}</td>
+        <td class="num">${c.qty}</td>
+        <td class="num">${mmss(left)}</td>
+        <td class="num">${money(c.reward)}</td>
+        <td class="r">${btn}</td>
+      </tr>`;
+    };
+    const head = '<thead><tr><th>Ore</th><th class="num">Qty</th><th class="num">Time</th><th class="num">Pays</th><th></th></tr></thead>';
+    body = `
+      <div class="sub-h">Accepted (${act.length} / 2)</div>
+      <table class="grid">${head}<tbody>${act.map((c) => row(c, 'active')).join('') || '<tr><td colspan="5" class="empty">No accepted contracts.</td></tr>'}</tbody></table>
+      <div class="sub-h">Available <button class="mini" data-act="refresh">Reroll</button></div>
+      <table class="grid">${head}<tbody>${offers.map((c) => row(c, 'offer')).join('') || '<tr><td colspan="5" class="empty">No offers right now.</td></tr>'}</tbody></table>
+      <p class="note">Contracts are filled automatically when you dock with enough ore. Late contracts pay nothing.</p>`;
+  }
+
   const reached = save.sectorEarned >= sec.goal;
+  const pct = Math.min(100, (save.sectorEarned / sec.goal) * 100);
+  const gate = reached ? (api.gateReady() ? 'Warp gate open' : 'Defeat the Dreadnought') : 'Quota not met';
   box.innerHTML = `
-    <header>
-      <div><span class="tag">HOME STATION</span><h2>${sec.name}</h2></div>
-      <div class="funds"><small>FUNDS</small><b>${money(save.money)}</b></div>
-    </header>
-    <div class="cols">
-      <section>
-        <h3>Market</h3>
-        <table><thead><tr><th>Ore</th><th>Price</th><th>Hold</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-        <button class="wide primary" data-act="sellall" ${cargoTotal(cargo) ? '' : 'disabled'}>Sell everything (${money(holdValue)})</button>
-        <h3>Ship service</h3>
-        <div class="svc"><span>Hull ${Math.ceil(hull)}/${stats.hullMax}</span><button data-act="repair" ${hullMissing > 0 && save.money >= 1 ? '' : 'disabled'}>Repair ${hullMissing > 0 ? money(rc) : ''}</button></div>
-        <div class="svc"><span>Fuel ${Math.ceil(fuel)}/${stats.fuelMax}</span><button data-act="refuel" ${fuelMissing > 0 && save.money >= 1 ? '' : 'disabled'}>Refuel ${fuelMissing > 0 ? money(fc) : ''}</button></div>
-        <button class="wide" data-act="service" ${hullMissing + fuelMissing > 0 ? '' : 'disabled'}>Repair and refuel (${money(rc + fc)})</button>
-      </section>
-      <section class="ups"><h3>Upgrades</h3><div class="upgrid">${ups}</div></section>
-      <section>
-        <h3>Active contracts (${act.length}/2)</h3>
-        ${act.map((c) => ctRow(c, 'active')).join('') || '<p class="dim">None accepted.</p>'}
-        <h3>Offers <button class="mini" data-act="refresh">Reroll</button></h3>
-        ${offers.map((c) => ctRow(c, 'offer')).join('') || '<p class="dim">No offers.</p>'}
-        <h3>Sector progress</h3>
-        <div class="track goal"><i style="width:${Math.min(100, (save.sectorEarned / sec.goal) * 100)}%"></i></div>
-        <p class="dim">${money(save.sectorEarned)} / ${money(sec.goal)} earned${reached ? (api.gateReady() ? ' - warp gate is open' : ' - defeat the Dreadnought') : ''}</p>
-      </section>
-    </div>
-    <footer><button class="primary big" data-act="launch">Launch (E)</button></footer>`;
+    <div class="wt"><span>HOME STATION - ${sec.name.toUpperCase()}</span><button class="x" data-act="launch" title="Launch (E)">X</button></div>
+    <div class="wb">
+      <div class="shop-top">
+        <div class="tabs">${TABS.map((t) => `<button class="tab ${t.id === tab ? 'on' : ''}" data-act="tab" data-id="${t.id}">${t.label}</button>`).join('')}</div>
+        <div class="funds"><label>CASH</label><b class="lcd">${money(save.money)}</b></div>
+      </div>
+      <div class="tabbody">${body}</div>
+      <div class="statusbar">
+        <div class="quota"><span>Sector quota</span><div class="track goal"><i style="width:${pct}%"></i></div><span>${money(save.sectorEarned)} / ${money(sec.goal)}</span><span class="gate">${gate}</span></div>
+        <button class="primary" data-act="launch">Launch (E)</button>
+      </div>
+    </div>`;
 }
 
 export function openShop(api: ShopApi): void {
   closeShop();
+  tab = 'market';
   shopApi = api;
   const o = document.createElement('div');
   o.className = 'overlay shop-wrap';
@@ -436,6 +477,9 @@ export function openShop(api: ShopApi): void {
         break;
       case 'refresh':
         shopApi.refresh();
+        break;
+      case 'tab':
+        tab = id as Tab;
         break;
       case 'launch':
         shopApi.launch();
