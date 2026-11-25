@@ -11,6 +11,19 @@ export interface AuthState {
   revision: number;
 }
 
+export interface PvpStats {
+  wins: number;
+  losses: number;
+  rating: number;
+  seasonRating: number;
+  season: string;
+}
+
+export interface PvpLeaderboard {
+  season: string;
+  players: Array<{ rank: number; username: string; rating: number }>;
+}
+
 interface SaveResponse {
   save: unknown;
   revision: number;
@@ -190,4 +203,16 @@ export function websocketUrl(): string {
 
 export function accountToken(): string | null {
   return authState()?.token ?? null;
+}
+
+export async function fetchPvpStats(): Promise<PvpStats> {
+  const state = authState();
+  if (!state) throw new Error('Sign in to view your PvP record.');
+  return await request<PvpStats>('/api/pvp/stats', {}, state.token);
+}
+
+export async function fetchPvpLeaderboard(): Promise<PvpLeaderboard> {
+  const state = authState();
+  if (!state) throw new Error('Sign in to view the ranked leaderboard.');
+  return await request<PvpLeaderboard>('/api/pvp/leaderboard', {}, state.token);
 }

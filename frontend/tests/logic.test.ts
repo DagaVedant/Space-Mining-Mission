@@ -4,6 +4,8 @@ import { createMarket, stepMarket } from '../src/market';
 import {
   addEarnings,
   buyUpgrade,
+  campaignObjectiveComplete,
+  campaignRequirementsMet,
   canBuyUpgrade,
   claimDailyQuest,
   cargoTotal,
@@ -14,8 +16,10 @@ import {
   loadSave,
   makeContract,
   newSave,
+  normalizeSave,
   persist,
   resolveContracts,
+  recordCampaignProgress,
   sectorGoalReached,
   statsFor,
   utcDate,
@@ -145,6 +149,29 @@ describe('campaign', () => {
     const rng = mulberry32(5);
     for (let i = 0; i < 100; i++) expect(pickWeighted(SECTORS[0].weights, rng)).not.toBe('platinum');
   });
+  it('requires quota and the sector objective before opening the gate', () => {
+    const save = newSave();
+    addEarnings(save, SECTORS[0].goal);
+    expect(campaignRequirementsMet(save)).toBe(false);
+    expect(recordCampaignProgress(save, 'ore', 7)).toBe(false);
+    expect(recordCampaignProgress(save, 'ore', 1)).toBe(true);
+    expect(campaignObjectiveComplete(save)).toBe(true);
+    expect(campaignRequirementsMet(save)).toBe(true);
+    expect(recordCampaignProgress(save, 'ore', 1)).toBe(false);
+  });
+  it('normalizes campaign objectives and weapon choice from older saves', () => {
+    const save = normalizeSave({
+      v: 2,
+      sector: 2,
+      objectiveProgress: [999, 1, 50],
+      completedObjectives: [2, 2, -1, 99],
+      selectedWeapon: 'lance',
+    });
+    expect(save?.objectiveProgress[0]).toBe(8);
+    expect(save?.objectiveProgress[2]).toBe(24);
+    expect(save?.completedObjectives).toEqual([0, 1, 2]);
+    expect(save?.selectedWeapon).toBe('lance');
+  });
 });
 
 describe('save', () => {
@@ -178,10 +205,11 @@ describe('save', () => {
       won: false,
     }));
     const save = loadSave();
-    expect(save?.v).toBe(2);
+    expect(save?.v).toBe(3);
     expect(save?.money).toBe(999);
     expect(save?.levels.cannon).toBe(2);
     expect(save?.selectedPilot).toBe('prospector');
+    expect(save?.objectiveProgress[0]).toBe(0);
     expect(localStore.has('rockbreaker-save-v2')).toBe(true);
     expect(localStore.has('rockbreaker-save-v1')).toBe(false);
   });

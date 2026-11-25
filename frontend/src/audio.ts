@@ -8,6 +8,7 @@ class Sfx {
   private thrustGain!: GainNode;
   private noiseBuf!: AudioBuffer;
   private ambientOn = false;
+  private volume = 0.55;
   muted = false;
 
   init(): void {
@@ -24,7 +25,7 @@ class Sfx {
     }
     const ctx = this.ctx;
     this.master = ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : 0.55;
+    this.master.gain.value = this.muted ? 0 : this.volume;
     this.master.connect(ctx.destination);
     const len = ctx.sampleRate * 2;
     this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -46,8 +47,13 @@ class Sfx {
 
   toggleMute(): boolean {
     this.muted = !this.muted;
-    if (this.ctx) this.master.gain.setTargetAtTime(this.muted ? 0 : 0.55, this.ctx.currentTime, 0.05);
+    if (this.ctx) this.master.gain.setTargetAtTime(this.muted ? 0 : this.volume, this.ctx.currentTime, 0.05);
     return this.muted;
+  }
+
+  setVolume(volume: number): void {
+    this.volume = Math.max(0, Math.min(1, volume));
+    if (this.ctx) this.master.gain.setTargetAtTime(this.muted ? 0 : this.volume, this.ctx.currentTime, 0.05);
   }
 
   private tone(freq: number, dur: number, type: Wave, vol: number, slideTo?: number, delay = 0): void {

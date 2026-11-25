@@ -4,10 +4,12 @@ import {
   PILOTS,
   SECTORS,
   SHIP_SKINS,
+  CAMPAIGN_OBJECTIVES,
   UPGRADES,
   type OreId,
   type PilotId,
   type ShipSkinId,
+  type WeaponId,
   type UpgradeId,
 } from './data';
 import { mulberry32, type Rng } from './rng';
@@ -16,7 +18,7 @@ export type Levels = Record<UpgradeId, number>;
 export type Cargo = Record<OreId, number>;
 
 export interface SaveData {
-  v: 2;
+  v: 3;
   money: number;
   lifetime: number;
   sector: number;
@@ -25,11 +27,14 @@ export interface SaveData {
   won: boolean;
   selectedPilot: PilotId;
   selectedSkin: ShipSkinId;
+  selectedWeapon: WeaponId;
   unlockedPilots: PilotId[];
   unlockedSkins: ShipSkinId[];
   dailyQuestDate: string;
   dailyProgress: Record<DailyMetric, number>;
   claimedDaily: string[];
+  objectiveProgress: number[];
+  completedObjectives: number[];
   updatedAt: number;
 }
 
@@ -83,7 +88,7 @@ export function newSave(): SaveData {
   for (const u of UPGRADES) levels[u.id] = 0;
   const date = utcDate();
   const save: SaveData = {
-    v: 2,
+    v: 3,
     money: 60,
     lifetime: 0,
     sector: 0,
@@ -92,11 +97,14 @@ export function newSave(): SaveData {
     won: false,
     selectedPilot: 'prospector',
     selectedSkin: 'industrial',
+    selectedWeapon: 'miner',
     unlockedPilots: ['prospector'],
     unlockedSkins: ['industrial'],
     dailyQuestDate: date,
     dailyProgress: { ore: 0, pirates: 0, credits: 0 },
     claimedDaily: [],
+    objectiveProgress: Array.from({ length: SECTORS.length }, () => 0),
+    completedObjectives: [],
     updatedAt: Date.now(),
   };
   refreshUnlocks(save);
@@ -188,6 +196,28 @@ export function addEarnings(save: SaveData, amount: number): void {
 
 export function sectorGoalReached(save: SaveData): boolean {
   return save.sectorEarned >= SECTORS[save.sector].goal;
+}
+
+export function objectiveProgress(save: SaveData): number {
+  return Math.min(CAMPAIGN_OBJECTIVES[save.sector].target, save.objectiveProgress[save.sector] ?? 0);
+}
+
+export function campaignObjectiveComplete(save: SaveData): boolean {
+  return save.completedObjectives.includes(save.sector);
+}
+
+export function campaignRequirementsMet(save: SaveData): boolean {
+  return sectorGoalReached(save) && campaignObjectiveComplete(save);
+}
+
+export function recordCampaignProgress(save: SaveData, metric: 'ore' | 'pirates', amount = 1): boolean {
+  const objective = CAMPAIGN_OBJECTIVES[save.sector];
+  if (objective.metric !== metric || !Number.isFinite(amount) || amount <= 0 || campaignObjectiveComplete(save)) return false;
+  save.objectiveProgress[save.sector] = (save.objectiveProgress[save.sector] ?? 0) + amount;
+  if (save.objectiveProgress[save.sector] < objective.target) return false;
+  save.objectiveProgress[save.sector] = objective.target;
+  save.completedObjectives.push(save.sector);
+  return true;
 }
 
 export function ensureDailyQuests(save: SaveData, date = utcDate()): DailyQuest[] {
@@ -294,7 +324,7 @@ export function normalizeSave(value: unknown): SaveData | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const data = value as Record<string, unknown>;
   const version = data.v;
-  if (version !== 1 && version !== 2) return null;
+  if (version !== 1 && version !== 2 && version !== 3) return null;
   const base = newSave();
   const sector = typeof data.sector === 'number' && Number.isInteger(data.sector)
     ? Math.min(SECTORS.length - 1, Math.max(0, data.sector))
@@ -319,6 +349,23 @@ export function normalizeSave(value: unknown): SaveData | null {
     ?? 'prospector';
   const selectedSkin = SHIP_SKINS.find((skin) => skin.id === data.selectedSkin && unlockedSkins.includes(skin.id))?.id
     ?? 'industrial';
+  const selectedWeapon = data.selectedWeapon === 'scatter' || data.selectedWeapon === 'lance' ? data.selectedWeapon : 'miner';
+  const rawObjectiveProgress = Array.isArray(data.objectiveProgress) ? data.objectiveProgress : [];
+  const objectiveProgressBySector = Array.from({ length: SECTORS.length }, (_, i) => {
+    const objective = CAMPAIGN_OBJECTIVES[i];
+    const value = rawObjectiveProgress[i];
+    return typeof value === 'number' && Number.isFinite(value) ? Math.min(objective.target, Math.max(0, Math.floor(value))) : 0;
+  });
+  const completedObjectives = Array.isArray(data.completedObjectives)
+    ? [...new Set(data.completedObjectives.filter((i): i is number => typeof i === 'number' && Number.isInteger(i) && i >= 0 && i < SECTORS.length))]
+    : [];
+  if (version < 3) {
+    for (let index = 0; index < sector; index++) completedObjectives.push(index);
+    const earned = typeof data.sectorEarned === 'number' && Number.isFinite(data.sectorEarned) ? data.sectorEarned : 0;
+    if (earned >= SECTORS[sector].goal) completedObjectives.push(sector);
+  }
+  const uniqueCompletedObjectives = [...new Set(completedObjectives)].sort((a, b) => a - b);
+  for (const index of uniqueCompletedObjectives) objectiveProgressBySector[index] = CAMPAIGN_OBJECTIVES[index].target;
   const rawProgress = data.dailyProgress;
   const progress = rawProgress && typeof rawProgress === 'object' && !Array.isArray(rawProgress)
     ? rawProgress as Record<string, unknown>
@@ -336,6 +383,7 @@ export function normalizeSave(value: unknown): SaveData | null {
     won: data.won === true,
     selectedPilot,
     selectedSkin,
+    selectedWeapon,
     unlockedPilots: [...new Set(['prospector' as PilotId, ...unlockedPilots])],
     unlockedSkins: [...new Set(['industrial' as ShipSkinId, ...unlockedSkins])],
     dailyQuestDate: typeof data.dailyQuestDate === 'string' ? data.dailyQuestDate : base.dailyQuestDate,
@@ -345,8 +393,10 @@ export function normalizeSave(value: unknown): SaveData | null {
       credits: typeof progress.credits === 'number' && Number.isFinite(progress.credits) ? Math.max(0, progress.credits) : 0,
     },
     claimedDaily,
-    updatedAt: version === 2 && typeof data.updatedAt === 'number' && Number.isFinite(data.updatedAt) ? data.updatedAt : 0,
-    v: 2,
+    objectiveProgress: objectiveProgressBySector,
+    completedObjectives: uniqueCompletedObjectives,
+    updatedAt: version >= 2 && typeof data.updatedAt === 'number' && Number.isFinite(data.updatedAt) ? data.updatedAt : 0,
+    v: 3,
   };
   refreshUnlocks(save);
   return save;
@@ -371,7 +421,7 @@ export function loadSave(): SaveData | null {
 
 export function persist(save: SaveData, sync = true, touch = true): void {
   try {
-    save.v = 2;
+    save.v = 3;
     if (touch) save.updatedAt = Date.now();
     localStorage.setItem(KEY, JSON.stringify(save));
     localStorage.removeItem(LEGACY_KEY);

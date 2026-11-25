@@ -43,9 +43,28 @@ db.exec(`
     winner_id TEXT NOT NULL REFERENCES users(id),
     loser_id TEXT NOT NULL REFERENCES users(id),
     duration_seconds INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    ranked INTEGER NOT NULL DEFAULT 0,
+    winner_rating_delta INTEGER NOT NULL DEFAULT 0,
+    loser_rating_delta INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS pvp_ratings (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL DEFAULT 1000,
+    season_key TEXT NOT NULL,
+    season_rating INTEGER NOT NULL DEFAULT 1000,
+    updated_at INTEGER NOT NULL
   );
 `);
+
+const matchColumns = new Set((db.pragma('table_info(matches)') as { name: string }[]).map((column) => column.name));
+for (const [name, definition] of [
+  ['ranked', 'INTEGER NOT NULL DEFAULT 0'],
+  ['winner_rating_delta', 'INTEGER NOT NULL DEFAULT 0'],
+  ['loser_rating_delta', 'INTEGER NOT NULL DEFAULT 0'],
+] as const) {
+  if (!matchColumns.has(name)) db.exec(`ALTER TABLE matches ADD COLUMN ${name} ${definition}`);
+}
 
 interface User {
   id: string;
@@ -72,6 +91,8 @@ interface SaveRow {
 interface ClientSocket extends WebSocket {
   user?: User;
   queued?: boolean;
+  ranked?: boolean;
+  queuedAt?: number;
   matchId?: string;
 }
 
@@ -80,6 +101,7 @@ interface InputState {
   ay: number;
   aim: number;
   fire: boolean;
+  boost: boolean;
 }
 
 interface Combatant {
@@ -111,6 +133,7 @@ interface Match {
   players: [Combatant, Combatant];
   projectiles: Projectile[];
   ended: boolean;
+  ranked: boolean;
 }
 
 const app = express();
@@ -140,6 +163,34 @@ app.use((req, res, next) => {
 });
 
 const authAttempts = new Map<string, { count: number; resetAt: number }>();
+function currentSeason(now = Date.now()): string {
+  const date = new Date(now);
+  return `${date.getUTCFullYear()}-S${Math.floor(date.getUTCMonth() / 3) + 1}`;
+}
+
+interface RatingRow {
+  rating: number;
+  season_key: string;
+  season_rating: number;
+}
+
+function ratingFor(userId: string): RatingRow {
+  const season = currentSeason();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO pvp_ratings (user_id, rating, season_key, season_rating, updated_at)
+    VALUES (?, 1000, ?, 1000, ?)
+    ON CONFLICT(user_id) DO NOTHING
+  `).run(userId, season, now);
+  const row = db.prepare('SELECT rating, season_key, season_rating FROM pvp_ratings WHERE user_id = ?')
+    .get(userId) as RatingRow;
+  if (row.season_key !== season) {
+    db.prepare('UPDATE pvp_ratings SET season_key = ?, season_rating = 1000, updated_at = ? WHERE user_id = ?')
+      .run(season, now, userId);
+    return { ...row, season_key: season, season_rating: 1000 };
+  }
+  return row;
+}
 function limitAuth(req: Request, res: Response, next: NextFunction): void {
   const key = req.ip ?? 'unknown';
   const now = Date.now();
@@ -219,6 +270,7 @@ app.post('/api/auth/register', limitAuth, (req, res) => {
     db.prepare('INSERT INTO users (id, username, salt, password_hash, created_at) VALUES (?, ?, ?, ?, ?)')
       .run(id, username, salt, scryptSync(password, salt, 64).toString('hex'), Date.now());
     db.prepare('INSERT INTO player_stats (user_id) VALUES (?)').run(id);
+    ratingFor(id);
     authResponse(res, { id, username });
   } catch (error) {
     if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
@@ -260,7 +312,7 @@ function isSavePayload(value: unknown): value is SavePayload {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const save = value as Record<string, unknown>;
   return (
-    (save.v === 1 || save.v === 2) &&
+    (save.v === 1 || save.v === 2 || save.v === 3) &&
     typeof save.money === 'number' &&
     Number.isFinite(save.money) &&
     save.money >= 0 &&
@@ -322,12 +374,25 @@ app.put('/api/save', requireUser, (req, res) => {
   res.json({ revision: nextRevision, updatedAt: now });
 });
 
-app.get('/api/pvp/stats', requireUser, (req, res) => {
+app.get('/api/pvp/stats', requireUser, (_req, res) => {
   const user = res.locals.user as User;
   const stats = db.prepare('SELECT wins, losses FROM player_stats WHERE user_id = ?').get(user.id) as
     | { wins: number; losses: number }
     | undefined;
-  res.json(stats ?? { wins: 0, losses: 0 });
+  const rating = ratingFor(user.id);
+  res.json({ ...(stats ?? { wins: 0, losses: 0 }), rating: rating.rating, seasonRating: rating.season_rating, season: rating.season_key });
+});
+
+app.get('/api/pvp/leaderboard', requireUser, (_req, res) => {
+  const season = currentSeason();
+  const rows = db.prepare(`
+    SELECT users.username, pvp_ratings.season_rating AS rating
+    FROM pvp_ratings JOIN users ON users.id = pvp_ratings.user_id
+    WHERE pvp_ratings.season_key = ?
+    ORDER BY pvp_ratings.season_rating DESC, pvp_ratings.updated_at ASC
+    LIMIT 20
+  `).all(season) as { username: string; rating: number }[];
+  res.json({ season, players: rows.map((row, index) => ({ rank: index + 1, ...row })) });
 });
 
 const server = app.listen(Number(process.env.PORT) || 3001, '0.0.0.0', () => {
@@ -345,16 +410,33 @@ function send(socket: WebSocket, data: object): void {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(data));
 }
 
-function recordMatchResult(match: Match, winner: Combatant, loser: Combatant): number {
+function recordMatchResult(match: Match, winner: Combatant, loser: Combatant): { duration: number; ratingChange: number } {
   const duration = Math.max(1, Math.floor((Date.now() - match.startedAt) / 1000));
+  let ratingChange = 0;
   const saveResult = db.transaction(() => {
-    db.prepare('INSERT INTO matches (id, winner_id, loser_id, duration_seconds, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(match.id, winner.id, loser.id, duration, Date.now());
+    if (match.ranked) {
+      const winnerRating = ratingFor(winner.id);
+      const loserRating = ratingFor(loser.id);
+      const expected = 1 / (1 + Math.pow(10, (loserRating.season_rating - winnerRating.season_rating) / 400));
+      ratingChange = Math.max(1, Math.round(32 * (1 - expected)));
+      const winnerAllTime = Math.max(100, winnerRating.rating + ratingChange);
+      const loserAllTime = Math.max(100, loserRating.rating - ratingChange);
+      const winnerSeason = Math.max(100, winnerRating.season_rating + ratingChange);
+      const loserSeason = Math.max(100, loserRating.season_rating - ratingChange);
+      db.prepare('UPDATE pvp_ratings SET rating = ?, season_rating = ?, updated_at = ? WHERE user_id = ?')
+        .run(winnerAllTime, winnerSeason, Date.now(), winner.id);
+      db.prepare('UPDATE pvp_ratings SET rating = ?, season_rating = ?, updated_at = ? WHERE user_id = ?')
+        .run(loserAllTime, loserSeason, Date.now(), loser.id);
+    }
+    db.prepare(`
+      INSERT INTO matches (id, winner_id, loser_id, duration_seconds, created_at, ranked, winner_rating_delta, loser_rating_delta)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(match.id, winner.id, loser.id, duration, Date.now(), Number(match.ranked), ratingChange, -ratingChange);
     db.prepare('UPDATE player_stats SET wins = wins + 1 WHERE user_id = ?').run(winner.id);
     db.prepare('UPDATE player_stats SET losses = losses + 1 WHERE user_id = ?').run(loser.id);
   });
   saveResult();
-  return duration;
+  return { duration, ratingChange };
 }
 
 function cleanSocket(socket: ClientSocket): void {
@@ -367,8 +449,15 @@ function cleanSocket(socket: ClientSocket): void {
   const other = match.players.find((player) => player.socket !== socket);
   const quitter = match.players.find((player) => player.socket === socket);
   if (other && quitter) {
-    const duration = recordMatchResult(match, other, quitter);
-    send(other.socket, { type: 'match-ended', reason: 'opponent-disconnected', winner: other.id, duration });
+    const result = recordMatchResult(match, other, quitter);
+    send(other.socket, {
+      type: 'match-ended',
+      reason: 'opponent-disconnected',
+      winner: other.id,
+      duration: result.duration,
+      ranked: match.ranked,
+      ratingChange: result.ratingChange,
+    });
   }
   match.ended = true;
   matches.delete(match.id);
@@ -376,23 +465,25 @@ function cleanSocket(socket: ClientSocket): void {
   if (other) other.socket.matchId = undefined;
 }
 
-function startMatch(first: ClientSocket, second: ClientSocket): void {
+function startMatch(first: ClientSocket, second: ClientSocket, ranked: boolean): void {
   const one = first.user;
   const two = second.user;
   if (!one || !two) return;
   const id = randomBytes(12).toString('hex');
   const players: [Combatant, Combatant] = [
-    { socket: first, id: one.id, name: one.username, x: 310, y: 450, vx: 0, vy: 0, rotation: 0, hp: 100, fireCooldown: 0, input: { ax: 0, ay: 0, aim: 0, fire: false } },
-    { socket: second, id: two.id, name: two.username, x: 1190, y: 450, vx: 0, vy: 0, rotation: Math.PI, hp: 100, fireCooldown: 0, input: { ax: 0, ay: 0, aim: Math.PI, fire: false } },
+    { socket: first, id: one.id, name: one.username, x: 310, y: 450, vx: 0, vy: 0, rotation: 0, hp: 100, fireCooldown: 0, input: { ax: 0, ay: 0, aim: 0, fire: false, boost: false } },
+    { socket: second, id: two.id, name: two.username, x: 1190, y: 450, vx: 0, vy: 0, rotation: Math.PI, hp: 100, fireCooldown: 0, input: { ax: 0, ay: 0, aim: Math.PI, fire: false, boost: false } },
   ];
-  const match: Match = { id, startedAt: Date.now(), players, projectiles: [], ended: false };
+  const match: Match = { id, startedAt: Date.now(), players, projectiles: [], ended: false, ranked };
   matches.set(id, match);
   first.matchId = id;
   second.matchId = id;
   first.queued = false;
   second.queued = false;
-  send(first, { type: 'match-found', matchId: id, playerId: one.id, opponent: two.username, world: WORLD });
-  send(second, { type: 'match-found', matchId: id, playerId: two.id, opponent: one.username, world: WORLD });
+  const firstRating = ranked ? ratingFor(one.id).season_rating : null;
+  const secondRating = ranked ? ratingFor(two.id).season_rating : null;
+  send(first, { type: 'match-found', matchId: id, playerId: one.id, opponent: two.username, world: WORLD, ranked, rating: firstRating, opponentRating: secondRating });
+  send(second, { type: 'match-found', matchId: id, playerId: two.id, opponent: one.username, world: WORLD, ranked, rating: secondRating, opponentRating: firstRating });
 }
 
 function finishMatch(match: Match, winner: Combatant, reason: string): void {
@@ -400,9 +491,17 @@ function finishMatch(match: Match, winner: Combatant, reason: string): void {
   match.ended = true;
   const loser = match.players.find((player) => player !== winner);
   if (!loser) return;
-  const duration = recordMatchResult(match, winner, loser);
+  const result = recordMatchResult(match, winner, loser);
   for (const player of match.players) {
-    send(player.socket, { type: 'match-ended', reason, winner: winner.id, duration });
+    const won = player.id === winner.id;
+    send(player.socket, {
+      type: 'match-ended',
+      reason,
+      winner: winner.id,
+      duration: result.duration,
+      ranked: match.ranked,
+      ratingChange: match.ranked ? (won ? result.ratingChange : -result.ratingChange) : 0,
+    });
     player.socket.matchId = undefined;
   }
   matches.delete(match.id);
@@ -413,12 +512,14 @@ function updateMatch(match: Match): void {
   const [a, b] = match.players;
   for (const player of match.players) {
     const input = player.input;
-    player.vx = (player.vx + input.ax * 560 * STEP) * 0.985;
-    player.vy = (player.vy + input.ay * 560 * STEP) * 0.985;
+    const acceleration = input.boost ? 860 : 560;
+    player.vx = (player.vx + input.ax * acceleration * STEP) * 0.985;
+    player.vy = (player.vy + input.ay * acceleration * STEP) * 0.985;
     const speed = Math.hypot(player.vx, player.vy);
-    if (speed > 330) {
-      player.vx = (player.vx / speed) * 330;
-      player.vy = (player.vy / speed) * 330;
+    const maxSpeed = input.boost ? 430 : 330;
+    if (speed > maxSpeed) {
+      player.vx = (player.vx / speed) * maxSpeed;
+      player.vy = (player.vy / speed) * maxSpeed;
     }
     player.x = Math.max(35, Math.min(WORLD.width - 35, player.x + player.vx * STEP));
     player.y = Math.max(35, Math.min(WORLD.height - 35, player.y + player.vy * STEP));
@@ -485,16 +586,31 @@ function handleMessage(socket: ClientSocket, raw: string): void {
     send(socket, { type: 'authenticated', username: user.username });
     return;
   }
+  if (message.type === 'ping' && typeof message.sentAt === 'number' && Number.isFinite(message.sentAt)) {
+    send(socket, { type: 'pong', sentAt: message.sentAt });
+    return;
+  }
   if (message.type === 'queue') {
     if (socket.matchId || socket.queued) return;
-    const opponentIndex = waiting.findIndex((entry) => entry !== socket && entry.user?.id !== socket.user?.id && entry.readyState === WebSocket.OPEN);
+    const ranked = message.ranked === true;
+    const playerRating = ranked ? ratingFor(socket.user.id).season_rating : 0;
+    const opponentIndex = waiting.findIndex((entry) => {
+      if (entry === socket || entry.user?.id === socket.user?.id || entry.readyState !== WebSocket.OPEN || entry.ranked !== ranked) return false;
+      if (!ranked) return true;
+      const opponentRating = entry.user ? ratingFor(entry.user.id).season_rating : 1000;
+      const waitSeconds = Math.max(0, Date.now() - (entry.queuedAt ?? Date.now())) / 1000;
+      const allowedGap = Math.min(800, 150 + Math.floor(waitSeconds / 10) * 100);
+      return Math.abs(playerRating - opponentRating) <= allowedGap;
+    });
     if (opponentIndex >= 0) {
       const opponent = waiting.splice(opponentIndex, 1)[0];
-      if (opponent) startMatch(opponent, socket);
+      if (opponent) startMatch(opponent, socket, ranked);
     } else {
       socket.queued = true;
+      socket.ranked = ranked;
+      socket.queuedAt = Date.now();
       waiting.push(socket);
-      send(socket, { type: 'queued' });
+      send(socket, { type: 'queued', ranked, rating: ranked ? playerRating : null, season: ranked ? currentSeason() : null });
     }
     return;
   }
@@ -510,7 +626,13 @@ function handleMessage(socket: ClientSocket, raw: string): void {
     const ax = typeof message.ax === 'number' && Number.isFinite(message.ax) ? Math.max(-1, Math.min(1, message.ax)) : 0;
     const ay = typeof message.ay === 'number' && Number.isFinite(message.ay) ? Math.max(-1, Math.min(1, message.ay)) : 0;
     const aim = typeof message.aim === 'number' && Number.isFinite(message.aim) ? message.aim : player.rotation;
-    player.input = { ax, ay, aim: Math.atan2(Math.sin(aim), Math.cos(aim)), fire: message.fire === true };
+    player.input = {
+      ax,
+      ay,
+      aim: Math.atan2(Math.sin(aim), Math.cos(aim)),
+      fire: message.fire === true,
+      boost: message.boost === true,
+    };
   }
 }
 

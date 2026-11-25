@@ -6,7 +6,7 @@ Replaces the previous game (Vulture) in this repo. Phaser 3 + TypeScript + Vite 
 A tycoon / space-shooter hybrid. Fly a mining ship around a large scrolling asteroid sector, shoot rocks apart, collect ore, sell it at your home station at fluctuating market prices, and reinvest in ship upgrades, auto-mining drones and station defenses. The home screen offers PvP dogfights or the solo AI campaign.
 
 ## Platform and controls
-Desktop browser. WASD thrust with inertia (drift physics), mouse aims, hold left mouse to fire the mining cannon. E docks at the station / enters the warp gate. Esc pauses. M mutes.
+Desktop and mobile browser. Keyboard thrust with inertia (drift physics), mouse aims, hold left mouse to fire. E docks at the station / enters the warp gate. Esc pauses. M mutes. Settings support key rebinding, aim sensitivity, volume, screen shake, reduced motion, HUD scale and an optional first-run tutorial; mobile layouts provide virtual move/aim/fire and boost controls.
 
 ## Core loop
 1. Leave the station, shoot asteroids (large -> medium -> small, splitting), collect ore chunks (magnet range, limited cargo).
@@ -25,19 +25,19 @@ Desktop browser. WASD thrust with inertia (drift physics), mouse aims, hold left
 - Environmental hazards: solar flares (warned, damage unless docked or inside the station safe zone), debris storms (fast rock swarms crossing the map), gravity wells (sector 2+, pull ships).
 
 ## Campaign
-Six sectors, each one large map with a home station. Each has an earnings goal; reaching it opens a warp gate. Sectors raise asteroid density, pirate frequency and hazards. The final sector spawns a Dreadnought boss after its goal; defeating it wins the campaign (then free play continues). Existing delivery contracts and rotating daily objectives provide additional missions and rewards.
+Six sectors, each one large map with a home station. Each has an earnings goal and a required sector objective; completing both opens a warp gate, and objective completion grants a credit bonus. The minimap includes hazard, planet, pirate and gate markers. Sectors raise asteroid density, pirate frequency and hazards. The final sector spawns a Dreadnought boss after its requirements; enemies telegraph attacks, and sector debriefs summarize mining, combat, damage and hazard warnings. Defeating the boss wins the campaign (then free play continues). Existing delivery contracts and rotating daily objectives provide additional missions and rewards.
 
 ## Persistence
-Versioned localStorage autosave on dock supports offline AI play and migrates existing v1 saves. Signed-in accounts sync campaign saves with the backend using revision checks. Pilots, ship skins, daily quest progress, upgrades and campaign unlocks are included in progression.
+Versioned localStorage autosave on dock supports offline AI play and migrates existing v1/v2 saves. Signed-in accounts sync campaign saves with the backend using revision checks. Pilots, ship skins, daily quest progress, upgrades, selected weapon and campaign objective progress are included in progression. Settings save separately in localStorage.
 
 ## Backend and multiplayer
-The Node.js service uses SQLite for accounts, sessions, cloud saves and PvP records. Passwords are stored as scrypt hashes; bearer sessions are hashed at rest. WebSocket PvP matchmaking pairs two signed-in players in a server-authoritative dogfight. The backend is separate from the static GitHub Pages frontend and must be configured/deployed independently.
+The Node.js service uses SQLite for accounts, sessions, cloud saves and PvP records. Passwords are stored as scrypt hashes; bearer sessions are hashed at rest. WebSocket PvP matchmaking pairs two signed-in players in a server-authoritative dogfight. Casual matches do not affect rating; ranked matches update seasonal and career ratings and appear on the leaderboard. Players can cancel queueing, retry after a timeout, or rematch. The backend is separate from the static GitHub Pages frontend and must be configured/deployed independently.
 
 ## Art and audio
 Fully procedural: asteroids drawn in code as flat-faceted polygons lit from upper-left with ore veins, vector ship / pirates / drones / station, particle effects, parallax starfield. WebAudio synthesized sound effects. Gritty industrial palette: near-black space, warm ore glows, bright readable shapes. No external assets, no gradients in rendering.
 
 ## Non-goals
-Mobile/touch, monetization, and social/clan systems. The old Java backend and Vulture assets are removed.
+Monetization and social/clan systems. The old Java backend and Vulture assets are removed.
 
 ## Verification
 Pure game logic (market, upgrades, contracts, save migration, daily quests, sector progress) is unit-tested with Vitest. Backend account/save/PvP flows are tested with Node's test runner. Frontend lint/build and backend type-check/tests must pass; playtest in the browser; GitHub Pages deploys from main and the backend is deployed separately.

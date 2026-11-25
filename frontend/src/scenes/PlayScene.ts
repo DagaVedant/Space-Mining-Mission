@@ -1,22 +1,36 @@
 import Phaser from 'phaser';
 import { sfx } from '../audio';
 import { AST_R, VARIANTS, type Sz } from '../art';
-import { ORES, ORE_IDS, SECTORS, SHIP_SKINS, UPGRADES, type OreId, type SectorDef, type UpgradeId } from '../data';
+import {
+  CAMPAIGN_OBJECTIVES,
+  ORES,
+  ORE_IDS,
+  SECTORS,
+  SHIP_SKINS,
+  UPGRADES,
+  WEAPONS,
+  type OreId,
+  type SectorDef,
+  type UpgradeId,
+} from '../data';
 import { createMarket, priceOf, stepMarket, type MarketState } from '../market';
 import {
   addEarnings,
   buyUpgrade,
+  campaignObjectiveComplete,
+  campaignRequirementsMet,
   cargoTotal,
   droneUpkeepPerSecond,
   emptyCargo,
   makeContract,
   persist,
+  objectiveProgress,
+  recordCampaignProgress,
   refuelCost,
   recordDailyProgress,
   repairCost,
   refreshUnlocks,
   resolveContracts,
-  sectorGoalReached,
   statsFor,
   type Cargo,
   type Contract,
@@ -24,8 +38,10 @@ import {
   type ShipStats,
 } from '../progress';
 import { pickWeighted } from '../rng';
+import { applyGameSettings, closeOverlay, closeShop, hud, money, openShop, shopOpen, showOverlay, showSettings, type ShopApi } from '../ui';
+import { loadSettings, saveSettings, type ControlAction, type GameSettings } from '../settings';
 import { session } from '../session';
-import { closeOverlay, closeShop, hud, money, openShop, shopOpen, showOverlay, type ShopApi } from '../ui';
+import { mountTouchControls, type TouchControls } from '../touch';
 
 type Spr = Phaser.Physics.Arcade.Sprite;
 type Body = Phaser.Physics.Arcade.Body;
@@ -36,6 +52,7 @@ interface Rock extends Spr {
   sz: Sz;
   hp: number;
 }
+
 interface Planet {
   x: number;
   y: number;
@@ -147,6 +164,7 @@ export class PlayScene extends Phaser.Scene {
   private wellGfx!: Phaser.GameObjects.Graphics;
   private planetGfx!: Phaser.GameObjects.Graphics;
   private beamGfx!: Phaser.GameObjects.Graphics;
+  private threatGfx!: Phaser.GameObjects.Graphics;
   private stars: Phaser.GameObjects.TileSprite[] = [];
 
   private fxRock!: Emitter;
@@ -157,6 +175,8 @@ export class PlayScene extends Phaser.Scene {
   private exhaust!: Emitter;
 
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
+  private settings!: GameSettings;
+  private touch!: TouchControls;
   private mm!: CanvasRenderingContext2D;
   private mmTick = 0;
 
@@ -179,10 +199,22 @@ export class PlayScene extends Phaser.Scene {
   private turretCd = 0;
   private boss: Boss | null = null;
   private goalAnnounced = false;
+  private objectiveAnnounced = false;
+  private touchInteractHeld = false;
+  private rocksBroken = 0;
+  private piratesDefeated = 0;
+  private oreCollected = 0;
+  private sectorCredits = 0;
+  private damageTaken = 0;
+  private hazardWarnings = 0;
   private flashMsg: { text: string; kind: 'warn' | 'danger' | 'good'; t: number } | null = null;
   private deadBanner = false;
   private cloudErrorHandler = (): void => hud.toast('Cloud sync failed; your local save is still available.', 'bad');
   private cloudUpdateHandler = (): void => hud.toast('A newer cloud save was synchronized.', 'info');
+  private settingsUpdateHandler = (): void => {
+    this.settings = loadSettings();
+    applyGameSettings(this.settings);
+  };
 
   private keyHandler = (e: KeyboardEvent): void => this.onKey(e);
   private blurHandler = (): void => {
@@ -216,7 +248,14 @@ export class PlayScene extends Phaser.Scene {
     this.flare = { phase: 'idle', t: 0, dmgCd: 0 };
     this.storm = { phase: 'idle', t: 0, dir: 0, spawnCd: 0 };
     this.boss = null;
-    this.goalAnnounced = sectorGoalReached(this.save);
+    this.goalAnnounced = campaignRequirementsMet(this.save);
+    this.objectiveAnnounced = campaignObjectiveComplete(this.save);
+    this.rocksBroken = 0;
+    this.piratesDefeated = 0;
+    this.oreCollected = 0;
+    this.sectorCredits = 0;
+    this.damageTaken = 0;
+    this.hazardWarnings = 0;
     this.flashMsg = null;
     this.deadBanner = false;
     this.wells = [];
@@ -248,24 +287,32 @@ export class PlayScene extends Phaser.Scene {
     this.ensureDrones();
 
     const kb = this.input.keyboard!;
-    this.keys = kb.addKeys('W,A,S,D,UP,LEFT,DOWN,RIGHT,SPACE,SHIFT') as Record<string, Phaser.Input.Keyboard.Key>;
+    const keyNames = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'SPACE', 'SHIFT', 'ESC'];
+    this.keys = kb.addKeys(keyNames.join(',')) as Record<string, Phaser.Input.Keyboard.Key>;
+    this.settings = loadSettings();
+    applyGameSettings(this.settings);
+    this.touch = mountTouchControls();
     window.addEventListener('keydown', this.keyHandler);
     window.addEventListener('blur', this.blurHandler);
+    window.addEventListener('asteroid-breaker-settings-changed', this.settingsUpdateHandler);
     window.addEventListener('rockbreaker-cloud-save-error', this.cloudErrorHandler);
     window.addEventListener('rockbreaker-cloud-save-updated', this.cloudUpdateHandler);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       window.removeEventListener('keydown', this.keyHandler);
       window.removeEventListener('blur', this.blurHandler);
+      window.removeEventListener('asteroid-breaker-settings-changed', this.settingsUpdateHandler);
       window.removeEventListener('rockbreaker-cloud-save-error', this.cloudErrorHandler);
       window.removeEventListener('rockbreaker-cloud-save-updated', this.cloudUpdateHandler);
       closeShop();
       closeOverlay();
+      this.touch.destroy();
       hud.hide();
       sfx.thrust(0);
     });
 
     hud.show();
     this.mm = hud.minimap();
+    if (this.settings.showTutorial) this.showFlightSchool();
     hud.toast(`Sector ${this.save.sector + 1}: ${this.sector.name}`, 'info');
     if (this.save.sector === 0 && this.save.lifetime === 0) {
       hud.toast('Shoot rocks, grab the ore, then press E at the station to sell.', 'info');
@@ -303,6 +350,7 @@ export class PlayScene extends Phaser.Scene {
     this.wellGfx = this.add.graphics().setDepth(-5);
     this.planetGfx = this.add.graphics().setDepth(-4);
     this.beamGfx = this.add.graphics().setDepth(7);
+    this.threatGfx = this.add.graphics().setDepth(7);
   }
 
   private buildGroups(): void {
@@ -604,7 +652,7 @@ export class PlayScene extends Phaser.Scene {
     this.boss = b;
     sfx.boss();
     sfx.alarm();
-    this.cameras.main.shake(900, 0.008);
+    this.shake(900, 0.008);
     this.flash('THE DREADNOUGHT HAS ARRIVED', 'danger', 7);
     hud.toast('Boss inbound. Destroy the Dreadnought to clear the Maw.', 'bad');
   }
@@ -645,14 +693,52 @@ export class PlayScene extends Phaser.Scene {
 
   private earn(amount: number): void {
     addEarnings(this.save, amount);
-    if (!this.goalAnnounced && sectorGoalReached(this.save)) {
+    this.sectorCredits += amount;
+    this.updateCampaignProgress();
+  }
+
+  private updateCampaignProgress(): void {
+    if (!this.objectiveAnnounced && campaignObjectiveComplete(this.save)) {
+      this.objectiveAnnounced = true;
+      const reward = CAMPAIGN_OBJECTIVES[this.save.sector].reward;
+      hud.toast(`Sector objective complete. Bonus: ${money(reward)}.`, 'good');
+      this.earn(reward);
+    }
+    if (!this.goalAnnounced && campaignRequirementsMet(this.save)) {
       this.goalAnnounced = true;
       if (!this.sector.boss) {
-        this.flash('SECTOR GOAL REACHED - WARP GATE OPEN', 'good', 8);
+        this.flash('SECTOR OBJECTIVE + QUOTA COMPLETE - WARP GATE OPEN', 'good', 8);
         hud.toast('The warp gate is open. Dock first, then fly to the gate.', 'good');
         sfx.sell();
       }
     }
+  }
+
+  private showFlightSchool(): void {
+    this.paused = true;
+    this.physics.world.pause();
+    this.time.paused = true;
+    showOverlay(
+      'FLIGHT SCHOOL',
+      `Move with ${this.settings.bindings.up}/${this.settings.bindings.left}/${this.settings.bindings.down}/${this.settings.bindings.right}; aim and fire with your mouse or configured fire key.<br>
+       ${this.settings.bindings.interact} docks at the station. Recover ore, return to sell and upgrade, then complete both the sector quota and mission objective to open the warp gate.<br>
+       Planets and gravity wells are dangerous. Touch pilots can use the on-screen controls.`,
+      [
+        {
+          label: 'Launch',
+          primary: true,
+          onClick: () => {
+            try {
+              saveSettings({ ...this.settings, showTutorial: false });
+              this.settings.showTutorial = false;
+            } catch (error) {
+              hud.toast(error instanceof Error ? error.message : 'Tutorial preference could not be saved.', 'bad');
+            }
+            this.setPaused(false);
+          },
+        },
+      ],
+    );
   }
 
   private droneEarn(ore: OreId, units: number, x: number, y: number): void {
@@ -679,6 +765,7 @@ export class PlayScene extends Phaser.Scene {
 
   private hurtPlayer(amount: number, silent = false): void {
     if (this.docked || this.dead || this.warping) return;
+    this.damageTaken += amount;
     this.shieldRecharge = 4;
     const absorbed = Math.min(this.shield, amount);
     this.shield -= absorbed;
@@ -686,7 +773,7 @@ export class PlayScene extends Phaser.Scene {
     if (!silent) {
       sfx.hurt();
       hud.hurt();
-      this.cameras.main.shake(140, 0.006);
+      this.shake(140, 0.006);
       this.burst(this.fxRed, this.player.x, this.player.y, 8);
     }
     if (this.hull <= 0) this.die();
@@ -698,7 +785,7 @@ export class PlayScene extends Phaser.Scene {
     sfx.explode();
     sfx.thrust(0);
     this.explosion(this.player.x, this.player.y, 3);
-    this.cameras.main.shake(500, 0.012);
+    this.shake(500, 0.012);
     this.player.disableBody(true, true);
     this.flame.setVisible(false);
     const lost = cargoTotal(this.cargo);
@@ -734,11 +821,12 @@ export class PlayScene extends Phaser.Scene {
 
   private breakRock(r: Rock, by: 'player' | 'drone' | 'turret'): void {
     const { x, y, sz, ore } = r;
+    this.rocksBroken++;
     r.destroy();
     this.explosion(x, y, sz === 'L' ? 1.6 : sz === 'M' ? 1 : 0.6);
     this.burst(this.fxOre, x, y, 6, ORES[ore].color);
     sfx.rockBreak(sz);
-    if (sz === 'L') this.cameras.main.shake(90, 0.003);
+    if (sz === 'L') this.shake(90, 0.003);
     const def = AST[sz];
     for (let i = 0; i < def.drop; i++) {
       if (by === 'drone') this.droneEarn(ore, 1, x, y);
@@ -757,6 +845,7 @@ export class PlayScene extends Phaser.Scene {
 
   private killPirate(p: Pirate): void {
     const { x, y } = p;
+    this.piratesDefeated++;
     p.destroy();
     this.explosion(x, y, 1.5);
     sfx.explode();
@@ -764,6 +853,8 @@ export class PlayScene extends Phaser.Scene {
     const bounty = 40 + 25 * this.save.sector;
     this.earn(bounty);
     recordDailyProgress(this.save, 'pirates', 1);
+    recordCampaignProgress(this.save, 'pirates');
+    this.updateCampaignProgress();
     this.floatText(x, y - 20, `Bounty ${money(bounty)}`);
     if (cargoTotal(p.loot) > 0) hud.toast('Pirate down. Your stolen ore dropped - grab it.', 'good');
   }
@@ -890,7 +981,7 @@ export class PlayScene extends Phaser.Scene {
       this.time.delayedCall(i * 160, () => {
         this.explosion(x + rnd(-110, 110), y + rnd(-70, 70), rnd(1.6, 2.8));
         sfx.explode();
-        this.cameras.main.shake(200, 0.01);
+        this.shake(200, 0.01);
       });
     }
     this.time.delayedCall(1500, () => {
@@ -913,16 +1004,25 @@ export class PlayScene extends Phaser.Scene {
 
   private onKey(e: KeyboardEvent): void {
     if (e.repeat) return;
-    const k = e.key.toLowerCase();
-    if (k === 'm') {
+    const key = e.code === 'Space' ? 'SPACE' : e.code.startsWith('Shift') ? 'SHIFT' :
+      e.code === 'Escape' ? 'ESC' : e.key.toUpperCase();
+    if (key === this.settings.bindings.mute) {
       const m = sfx.toggleMute();
       hud.toast(m ? 'Sound off' : 'Sound on', 'info');
-    } else if (k === 'e') {
+    } else if (key === this.settings.bindings.interact) {
       this.interact();
-    } else if (k === 'escape') {
+    } else if (key === this.settings.bindings.pause) {
       if (shopOpen()) this.launch();
       else this.setPaused(!this.paused);
     }
+  }
+
+  private isActionDown(action: ControlAction): boolean {
+    return this.keys[this.settings.bindings[action]]?.isDown ?? false;
+  }
+
+  private shake(duration: number, intensity: number): void {
+    if (this.settings.screenShake && !this.settings.reducedMotion) this.cameras.main.shake(duration, intensity);
   }
 
   private setPaused(p: boolean): void {
@@ -934,6 +1034,7 @@ export class PlayScene extends Phaser.Scene {
       sfx.thrust(0);
       showOverlay('PAUSED', 'Take a breath. The belt will wait.', [
         { label: 'Resume', primary: true, onClick: () => this.setPaused(false) },
+        { label: 'Settings', onClick: () => showSettings(() => this.setPaused(true)) },
         { label: 'Main menu', onClick: () => this.toMenu() },
       ]);
     } else {
@@ -963,7 +1064,7 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private gateOpen(): boolean {
-    return !this.sector.boss && sectorGoalReached(this.save);
+    return !this.sector.boss && campaignRequirementsMet(this.save);
   }
 
   private dock(): void {
@@ -1000,12 +1101,25 @@ export class PlayScene extends Phaser.Scene {
     this.cameras.main.fadeOut(1000, 0, 0, 0);
     (this.player.body as Body).setVelocity(0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
+      const completedSector = this.save.sector;
       this.save.sector += 1;
       this.save.sectorEarned = 0;
       refreshUnlocks(this.save);
       session.cargo = { ...this.cargo };
       persist(this.save);
-      this.scene.restart();
+      const objective = CAMPAIGN_OBJECTIVES[completedSector];
+      showOverlay(
+        'SECTOR DEBRIEF',
+        `Sector ${completedSector + 1}: ${this.sector.name}<br>
+         Credits earned: ${money(this.sectorCredits)} · Asteroids broken: ${this.rocksBroken}<br>
+         Pirates defeated: ${this.piratesDefeated} · Ore recovered: ${this.oreCollected} · Damage absorbed: ${Math.round(this.damageTaken)}<br>
+         Hazard warnings: ${this.hazardWarnings} · Hull remaining: ${Math.max(0, Math.round(this.hull))}<br>
+         Objective: ${objective.description} — COMPLETE`,
+        [
+          { label: 'Continue', primary: true, onClick: () => this.scene.restart() },
+          { label: 'Main menu', onClick: () => this.toMenu() },
+        ],
+      );
     });
   }
 
@@ -1119,6 +1233,10 @@ export class PlayScene extends Phaser.Scene {
     this.clock += dt;
     this.updateMarket(dt);
     this.updateBg();
+    this.threatGfx.clear();
+    const touchInteracting = this.touch.state.interacting;
+    if (touchInteracting && !this.touchInteractHeld) this.interact();
+    this.touchInteractHeld = touchInteracting;
     if (this.docked) {
       this.updateHud();
       return;
@@ -1182,16 +1300,15 @@ export class PlayScene extends Phaser.Scene {
     if (this.dead) return;
     const p = this.player;
     const body = p.body as Body;
-    const k = this.keys;
-    let ax = (k.D.isDown || k.RIGHT.isDown ? 1 : 0) - (k.A.isDown || k.LEFT.isDown ? 1 : 0);
-    let ay = (k.S.isDown || k.DOWN.isDown ? 1 : 0) - (k.W.isDown || k.UP.isDown ? 1 : 0);
+    let ax = Number(this.isActionDown('right')) - Number(this.isActionDown('left')) + this.touch.state.moveX;
+    let ay = Number(this.isActionDown('down')) - Number(this.isActionDown('up')) + this.touch.state.moveY;
     const mag = Math.hypot(ax, ay);
     const thrusting = mag > 0;
     if (thrusting) {
       ax /= mag;
       ay /= mag;
     }
-    const turbo = k.SHIFT.isDown && thrusting && this.fuel > 0;
+    const turbo = (this.isActionDown('boost') || this.touch.state.boosting) && thrusting && this.fuel > 0;
     const boost = turbo ? 1.7 : 1;
     const power = (this.fuel > 0 ? 1 : 0.22) * boost;
     body.setMaxVelocity(this.stats.maxSpeed * (this.fuel > 0 ? 1 : 0.55) * boost);
@@ -1205,11 +1322,14 @@ export class PlayScene extends Phaser.Scene {
     sfx.thrust(thrusting ? 0.5 + (this.fuel > 0 ? 0.5 : 0) : 0);
 
     const ptr = this.input.activePointer;
-    const shooting = ptr.leftButtonDown() || k.SPACE.isDown;
-    if (shooting) {
+    const shooting = ptr.leftButtonDown() || this.isActionDown('fire') || this.touch.state.firing;
+    if (this.touch.state.aim !== null) {
+      p.rotation = this.touch.state.aim;
+    } else if (shooting) {
       // firing: aim at the mouse
       const w = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
-      p.rotation = Math.atan2(w.y - p.y, w.x - p.x);
+      const aim = Math.atan2(w.y - p.y, w.x - p.x);
+      p.rotation = Phaser.Math.Angle.RotateTo(p.rotation, aim, 10 * this.settings.aimSensitivity * dt);
     } else if (thrusting) {
       // otherwise the nose swings toward the direction you are flying
       p.rotation = Phaser.Math.Angle.RotateTo(p.rotation, Math.atan2(ay, ax), 10 * dt);
@@ -1233,19 +1353,23 @@ export class PlayScene extends Phaser.Scene {
 
   private fire(): void {
     const p = this.player;
-    this.fireCd = this.stats.fireDelay / 1000;
-    const ang = p.rotation + rnd(-0.025, 0.025);
-    const mx = p.x + Math.cos(p.rotation) * 28;
-    const my = p.y + Math.sin(p.rotation) * 28;
-    const b = this.bullets.create(mx, my, 'bullet') as Bullet;
-    b.life = 0.85;
-    b.dmg = this.stats.damage;
-    b.setDepth(6);
-    b.setRotation(ang);
-    (b.body as Body).setCircle(4, 5, -1);
     const pv = (p.body as Body).velocity;
-    b.setVelocity(Math.cos(ang) * 900 + pv.x * 0.5, Math.sin(ang) * 900 + pv.y * 0.5);
-    this.burst(this.fxSpark, mx, my, 2);
+    const weapon = WEAPONS.find((candidate) => candidate.id === this.save.selectedWeapon) ?? WEAPONS[0];
+    this.fireCd = this.stats.fireDelay * weapon.fireDelayMultiplier / 1000;
+    for (let i = 0; i < weapon.projectiles; i++) {
+      const centered = i - (weapon.projectiles - 1) / 2;
+      const ang = p.rotation + centered * weapon.spread + rnd(-0.025, 0.025);
+      const mx = p.x + Math.cos(ang) * 28;
+      const my = p.y + Math.sin(ang) * 28;
+      const b = this.bullets.create(mx, my, 'bullet') as Bullet;
+      b.life = 0.85;
+      b.dmg = this.stats.damage * weapon.damageMultiplier;
+      b.setDepth(6);
+      b.setRotation(ang);
+      (b.body as Body).setCircle(4, 5, -1);
+      b.setVelocity(Math.cos(ang) * 900 + pv.x * 0.5, Math.sin(ang) * 900 + pv.y * 0.5);
+      this.burst(this.fxSpark, mx, my, 2);
+    }
     sfx.shoot();
   }
 
@@ -1302,6 +1426,9 @@ export class PlayScene extends Phaser.Scene {
         if (space > 0) {
           this.cargo[c.ore] += 1;
           recordDailyProgress(this.save, 'ore', 1);
+          this.oreCollected++;
+          recordCampaignProgress(this.save, 'ore');
+          this.updateCampaignProgress();
           sfx.pickup();
           this.burst(this.fxOre, c.x, c.y, 3, ORES[c.ore].color);
           c.destroy();
@@ -1385,6 +1512,10 @@ export class PlayScene extends Phaser.Scene {
           type.shotDamage + 2 * this.save.sector,
         );
       }
+      if (isPlayer && dist < type.range && pr.fireCd > 0 && pr.fireCd < 0.28) {
+        this.threatGfx.lineStyle(2, 0xff625d, 0.7);
+        this.threatGfx.lineBetween(pr.x, pr.y, p.x, p.y);
+      }
       if (isPlayer && dist < 42 && cargoTotal(this.cargo) > 0) this.steal(pr);
       else if (isPlayer && dist < 34 && pr.ramCd <= 0) {
         pr.ramCd = 1.2;
@@ -1418,7 +1549,7 @@ export class PlayScene extends Phaser.Scene {
     pr.setTint(0xffd0a0);
     sfx.hurt();
     hud.hurt();
-    this.cameras.main.shake(160, 0.007);
+    this.shake(160, 0.007);
     hud.toast(`A pirate stole ${taken} ore! Shoot it before it escapes.`, 'bad');
   }
 
@@ -1521,7 +1652,7 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private updateBoss(dt: number): void {
-    if (this.sector.boss && !this.save.won && !this.boss && sectorGoalReached(this.save)) this.spawnBoss();
+    if (this.sector.boss && !this.save.won && !this.boss && campaignRequirementsMet(this.save)) this.spawnBoss();
     const b = this.boss;
     if (!b) return;
     const body = b.body as Body;
@@ -1537,6 +1668,14 @@ export class PlayScene extends Phaser.Scene {
       b.ringCd -= dt;
       b.spawnCd -= dt;
       const enraged = b.hp < b.max * 0.5;
+      if (b.fireCd > 0 && b.fireCd < 0.35) {
+        this.threatGfx.lineStyle(4, 0xff4035, 0.8);
+        this.threatGfx.lineBetween(b.x, b.y, p.x, p.y);
+      }
+      if (enraged && b.ringCd > 0 && b.ringCd < 0.9) {
+        this.threatGfx.lineStyle(3, 0xffa43a, 0.6);
+        this.threatGfx.strokeCircle(b.x, b.y, 240);
+      }
       if (b.fireCd <= 0) {
         b.fireCd = enraged ? 1.3 : 1.9;
         for (const off of [-0.2, 0, 0.2]) this.enemyShot(b.x, b.y, ang + off, 340, 11);
@@ -1561,6 +1700,7 @@ export class PlayScene extends Phaser.Scene {
       if (this.t >= this.nextFlare) {
         f.phase = 'warn';
         f.t = 7;
+        this.hazardWarnings++;
         sfx.alarm();
       }
     } else if (f.phase === 'warn') {
@@ -1593,6 +1733,7 @@ export class PlayScene extends Phaser.Scene {
         s.phase = 'warn';
         s.t = 6;
         s.dir = Math.floor(Math.random() * 4);
+        this.hazardWarnings++;
         sfx.alarm();
       }
     } else if (s.phase === 'warn') {
@@ -1768,7 +1909,13 @@ export class PlayScene extends Phaser.Scene {
     if (dS < DOCK_R) hud.hint('E - Dock at station');
     else if (!this.sector.boss && dG < GATE_R + 60) {
       if (this.gateOpen()) hud.hint(`E - Warp to ${SECTORS[this.save.sector + 1].name}`);
-      else hud.hint(`Gate sealed - earn ${money(this.sector.goal - this.save.sectorEarned)} more`);
+      else {
+        const objective = CAMPAIGN_OBJECTIVES[this.save.sector];
+        const requirement = campaignObjectiveComplete(this.save)
+          ? `Earn ${money(Math.max(0, this.sector.goal - this.save.sectorEarned))} more`
+          : `${objective.description} (${objectiveProgress(this.save)}/${objective.target})`;
+        hud.hint(`Gate sealed - ${requirement}`);
+      }
     } else hud.hint(null);
   }
 
@@ -1790,6 +1937,12 @@ export class PlayScene extends Phaser.Scene {
       clock: this.clock,
       market: this.market,
       boss: this.boss ? { hp: Math.max(0, this.boss.hp), max: this.boss.max } : null,
+      mission: {
+        description: CAMPAIGN_OBJECTIVES[this.save.sector].description,
+        progress: objectiveProgress(this.save),
+        target: CAMPAIGN_OBJECTIVES[this.save.sector].target,
+        complete: campaignObjectiveComplete(this.save),
+      },
     });
   }
 

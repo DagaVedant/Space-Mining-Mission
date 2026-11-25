@@ -98,13 +98,16 @@ test('accounts, versioned cloud saves, and authoritative PvP matches work', asyn
   let firing: ReturnType<typeof setInterval> | undefined;
 
   const initialSave = {
-    v: 2,
+    v: 3,
     money: 60,
     lifetime: 0,
     sector: 0,
     sectorEarned: 0,
     levels: { cannon: 0 },
     won: false,
+    objectiveProgress: [0, 0, 0, 0, 0, 0],
+    completedObjectives: [],
+    selectedWeapon: 'miner',
   };
   const saved = await fetch(`${baseUrl}/api/save`, {
     method: 'PUT',
@@ -138,16 +141,19 @@ test('accounts, versioned cloud saves, and authoritative PvP matches work', asyn
     one.send(JSON.stringify({ type: 'authenticate', token: first.token }));
     two.send(JSON.stringify({ type: 'authenticate', token: second.token }));
     await Promise.all([authOne, authTwo]);
+    const pong = waitForMessage<{ type: string; sentAt: number }>(one, 'pong');
+    one.send(JSON.stringify({ type: 'ping', sentAt: 123 }));
+    assert.equal((await pong).sentAt, 123);
 
     const queued = waitForMessage(one, 'queued');
-    one.send(JSON.stringify({ type: 'queue' }));
+    one.send(JSON.stringify({ type: 'queue', ranked: true }));
     await queued;
     const foundOne = waitForMessage<{ type: string; playerId: string }>(one, 'match-found');
     const foundTwo = waitForMessage(two, 'match-found');
-    two.send(JSON.stringify({ type: 'queue' }));
+    two.send(JSON.stringify({ type: 'queue', ranked: true }));
     const [matchOne] = await Promise.all([foundOne, foundTwo]);
 
-    const result = waitForMessage<{ type: string; winner: string }>(one, 'match-ended', 9000);
+    const result = waitForMessage<{ type: string; winner: string; ranked?: boolean; ratingChange?: number }>(one, 'match-ended', 9000);
     firing = setInterval(() => {
       if (one.readyState === WebSocket.OPEN) one.send(JSON.stringify({ type: 'input', ax: 0, ay: 0, aim: 0, fire: true }));
     }, 50);
@@ -155,6 +161,8 @@ test('accounts, versioned cloud saves, and authoritative PvP matches work', asyn
     clearInterval(firing);
     firing = undefined;
     assert.equal(ending.winner, matchOne.playerId);
+    assert.equal(ending.ranked, true);
+    assert.ok((ending.ratingChange ?? 0) > 0);
   } finally {
     if (firing) clearInterval(firing);
     one.close();
@@ -163,7 +171,15 @@ test('accounts, versioned cloud saves, and authoritative PvP matches work', asyn
 
   const stats = await fetch(`${baseUrl}/api/pvp/stats`, { headers: { Authorization: `Bearer ${first.token}` } });
   assert.equal(stats.status, 200);
-  assert.equal((await stats.json() as { wins: number }).wins, 1);
+  const firstStats = await stats.json() as { wins: number; rating: number; seasonRating: number };
+  assert.equal(firstStats.wins, 1);
+  assert.ok(firstStats.rating > 1000);
+  assert.ok(firstStats.seasonRating > 1000);
+  const leaderboard = await fetch(`${baseUrl}/api/pvp/leaderboard`, {
+    headers: { Authorization: `Bearer ${first.token}` },
+  });
+  assert.equal(leaderboard.status, 200);
+  assert.ok((await leaderboard.json() as { players: Array<{ username: string }> }).players.some((player) => player.username === first.user.username));
 
   const disconnectedPilot = await register(`quit_${suffix}`);
   const reconnect = new WebSocket(wsUrl);

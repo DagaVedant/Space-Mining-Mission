@@ -1,11 +1,20 @@
 import Phaser from 'phaser';
 import { sfx } from '../audio';
 import { AST_R, VARIANTS, buildTextures, type Sz } from '../art';
-import { ORE_IDS } from '../data';
-import { authenticate, currentAccount, restoreCloudSave, signOut, syncCloudSave } from '../cloud';
+import { ORE_IDS, type WeaponId } from '../data';
+import {
+  authenticate,
+  currentAccount,
+  fetchPvpLeaderboard,
+  fetchPvpStats,
+  restoreCloudSave,
+  signOut,
+  syncCloudSave,
+} from '../cloud';
 import { claimDailyQuest, clearSave, loadSave, newSave, persist, setCloudSyncHandler } from '../progress';
-import { resetSession } from '../session';
-import { closeOverlay, showMenu, type MenuActions } from '../ui';
+import { resetSession, session } from '../session';
+import { applyGameSettings, closeOverlay, showMenu, type MenuActions } from '../ui';
+import { loadSettings } from '../settings';
 
 interface Drifter {
   img: Phaser.GameObjects.Image;
@@ -28,6 +37,7 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     this.activeMenu = true;
     buildTextures(this);
+    applyGameSettings(loadSettings());
     this.cameras.main.setBackgroundColor(0x07090c);
     this.cameras.main.fadeIn(400, 0, 0, 0);
     this.drifters = [];
@@ -78,13 +88,14 @@ export class MenuScene extends Phaser.Scene {
         persist(fresh);
         this.begin(fresh);
       },
-      pvp: () => {
+      pvp: (ranked) => {
         if (!currentAccount()) {
           this.showHome(save, 'Sign in to join online PvP.');
           return;
         }
         this.menuEpoch++;
         resetSession(save ?? newSave());
+        session.pvpRanked = ranked;
         closeOverlay();
         this.scene.start('PvP');
       },
@@ -111,6 +122,12 @@ export class MenuScene extends Phaser.Scene {
         persist(save);
         this.showHome(save);
       },
+      selectWeapon: (weapon: WeaponId) => {
+        if (!save) return;
+        save.selectedWeapon = weapon;
+        persist(save);
+        this.showHome(save);
+      },
       claimDaily: (id) => {
         if (!save) return;
         if (!claimDailyQuest(save, id)) {
@@ -121,7 +138,34 @@ export class MenuScene extends Phaser.Scene {
         this.showHome(save);
       },
     };
-    showMenu(save, currentAccount(), actions, notice);
+    const account = currentAccount();
+    showMenu(save, account, actions, notice);
+    if (account) {
+      const epoch = this.menuEpoch;
+      void fetchPvpStats().then((stats) => {
+        if (!this.activeMenu || epoch !== this.menuEpoch) return;
+        const node = document.getElementById('pvp-stats');
+        if (node) node.textContent = `PvP ${stats.wins}W-${stats.losses}L · Season ${stats.season} #${stats.seasonRating} · Career #${stats.rating}`;
+        void fetchPvpLeaderboard().then((leaderboard) => {
+          if (!this.activeMenu || epoch !== this.menuEpoch) return;
+          const currentNode = document.getElementById('pvp-stats');
+          if (!currentNode) return;
+          const leaders = leaderboard.players.slice(0, 3)
+            .map((player) => `${player.rank}. ${player.username} ${player.rating}`)
+            .join(' | ');
+          currentNode.textContent +=
+            (leaders ? ` · Top: ${leaders}` : ' · No ranked pilots yet');
+        }).catch(() => {
+          if (!this.activeMenu || epoch !== this.menuEpoch) return;
+          const currentNode = document.getElementById('pvp-stats');
+          if (currentNode) currentNode.textContent += ' · Leaderboard unavailable';
+        });
+      }).catch((error: unknown) => {
+        if (!this.activeMenu || epoch !== this.menuEpoch) return;
+        const node = document.getElementById('pvp-stats');
+        if (node) node.textContent = error instanceof Error ? `PvP record unavailable: ${error.message}` : 'PvP record unavailable.';
+      });
+    }
   }
 
   private begin(save: ReturnType<typeof newSave>): void {

@@ -1,7 +1,23 @@
-import { ORES, ORE_IDS, PILOTS, SECTORS, SHIP_SKINS, UPGRADES, type OreId, type PilotId, type ShipSkinId, type UpgradeId } from './data';
+import {
+  CAMPAIGN_OBJECTIVES,
+  ORES,
+  ORE_IDS,
+  PILOTS,
+  SECTORS,
+  SHIP_SKINS,
+  UPGRADES,
+  WEAPONS,
+  type OreId,
+  type PilotId,
+  type ShipSkinId,
+  type UpgradeId,
+  type WeaponId,
+} from './data';
+import { sfx } from './audio';
 import { oreIcon } from './oreart';
 import { priceOf, targetMult, type MarketState } from './market';
 import type { Account } from './cloud';
+import { loadSettings, saveSettings, type ControlAction } from './settings';
 import {
   canBuyUpgrade,
   cargoTotal,
@@ -15,6 +31,8 @@ import {
   type SaveData,
   type ShipStats,
   utcDate,
+  campaignObjectiveComplete,
+  objectiveProgress,
 } from './progress';
 
 const root = (): HTMLElement => document.getElementById('ui') as HTMLElement;
@@ -39,6 +57,7 @@ export interface HudState {
   clock: number;
   market: MarketState;
   boss: { hp: number; max: number } | null;
+  mission: { description: string; progress: number; target: number; complete: boolean };
 }
 
 export interface ShopApi {
@@ -132,6 +151,7 @@ function buildHud(): void {
       <div class="cash"><span id="money"></span></div>
       <div id="sector-name"></div>
       <div id="goal-text" class="dimt"></div>
+        <div id="mission-text" role="status" aria-live="polite"></div>
       <div id="v-cargo" class="dimt"></div>
     </div>
     <div class="win contracts"><div class="wt">CONTRACTS</div><div class="wb" id="contracts"></div></div>
@@ -141,7 +161,7 @@ function buildHud(): void {
     <div id="hint" class="hidden"></div>
     <div id="pricebar" class="plate"><div class="pl">PRICES</div><div id="ticker"></div></div>
     <div class="keys" id="keys">WASD move | Shift turbo | Space or click fire (aim with mouse) | E dock / gate | Esc pause | M mute</div>
-    <div class="win mapwin"><div class="wt">MAP</div><canvas id="minimap" width="180" height="180"></canvas></div>
+    <div class="win mapwin"><div class="wt">MAP</div><canvas id="minimap" width="180" height="180"></canvas><div class="map-legend">White: ship · Orange: gate · Purple: gravity well · Blue: planet · Red: pirate</div></div>
     <div id="dock">
       <div class="vitals"><div id="hearts" class="icons"></div><div id="bolts" class="icons"></div></div>
       <div id="shield-bar" class="xp shield hidden"><i id="b-shield"></i></div>
@@ -158,6 +178,12 @@ export const hud = {
     el('hud').classList.remove('hidden');
     el('toasts').innerHTML = '';
     el('banner').classList.add('hidden');
+    const settings = loadSettings();
+    const keyLabel = (key: string): string => KEY_LABELS[key] ?? key;
+    setText(
+      'keys',
+      `${keyLabel(settings.bindings.up)} ${keyLabel(settings.bindings.left)} ${keyLabel(settings.bindings.down)} ${keyLabel(settings.bindings.right)} move | ${keyLabel(settings.bindings.boost)} boost | ${keyLabel(settings.bindings.fire)} fire | ${keyLabel(settings.bindings.interact)} dock | ${keyLabel(settings.bindings.pause)} pause`,
+    );
     window.setTimeout(() => el('keys')?.classList.add('fade'), 25000);
   },
   hide(): void {
@@ -191,6 +217,7 @@ export const hud = {
     el('shield-bar').classList.toggle('hidden', s.shieldMax <= 0);
     if (s.shieldMax > 0) setWidth('b-shield', (s.shield / s.shieldMax) * 100);
     setText('goal-text', s.earned >= s.goal ? 'Quota met' : `Quota ${money(s.earned)} / ${money(s.goal)}`);
+    setText('mission-text', `${s.mission.complete ? '✓' : 'MISSION'} ${s.mission.description} · ${s.mission.progress}/${s.mission.target}`);
     setText('v-cargo', `Hold ${used} / ${s.cargoMax}`);
     const cs = s.contracts
       .map((c) => {
@@ -305,14 +332,123 @@ export function showOverlay(title: string, body: string, buttons: OverlayButton[
   (box.querySelector('button.primary') as HTMLElement | null)?.focus();
 }
 
+export function applyGameSettings(settings = loadSettings()): void {
+  const ui = root();
+  ui.style.setProperty('--hud-scale', String(settings.hudScale));
+  document.body.classList.toggle('reduced-motion', settings.reducedMotion);
+  sfx.setVolume(settings.volume);
+}
+
+const CONTROL_LABELS: Record<ControlAction, string> = {
+  up: 'Thrust up',
+  down: 'Thrust down',
+  left: 'Thrust left',
+  right: 'Thrust right',
+  fire: 'Fire',
+  boost: 'Turbo',
+  interact: 'Dock / interact',
+  pause: 'Pause',
+  mute: 'Mute audio',
+};
+const REBINDABLE_KEYS = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'SPACE', 'SHIFT', 'E', 'ESC', 'M'];
+const KEY_LABELS: Record<string, string> = {
+  UP: 'Arrow Up',
+  DOWN: 'Arrow Down',
+  LEFT: 'Arrow Left',
+  RIGHT: 'Arrow Right',
+  SPACE: 'Space',
+  SHIFT: 'Shift',
+  ESC: 'Escape',
+};
+
+export function showSettings(onClose: () => void = closeOverlay): void {
+  closeOverlay();
+  const settings = loadSettings();
+  const keyOptions = (selected: string): string => REBINDABLE_KEYS.map((key) =>
+    `<option value="${key}" ${key === selected ? 'selected' : ''}>${KEY_LABELS[key] ?? key}</option>`,
+  ).join('');
+  const bindings = (Object.keys(CONTROL_LABELS) as ControlAction[])
+    .map((action) => `<label>${CONTROL_LABELS[action]}<select data-binding="${action}">${keyOptions(settings.bindings[action])}</select></label>`)
+    .join('');
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `
+    <section class="win settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="wt" id="settings-title">SETTINGS</div>
+      <div class="wb settings-body">
+        <label>Aim sensitivity <output data-value="aimSensitivity"></output>
+          <input type="range" min="0.25" max="2" step="0.05" data-setting="aimSensitivity">
+        </label>
+        <label>Audio volume <output data-value="volume"></output>
+          <input type="range" min="0" max="1" step="0.05" data-setting="volume">
+        </label>
+        <label>HUD scale <output data-value="hudScale"></output>
+          <input type="range" min="0.75" max="1.5" step="0.05" data-setting="hudScale">
+        </label>
+        <label class="check"><input type="checkbox" data-setting="screenShake"> Screen shake</label>
+        <label class="check"><input type="checkbox" data-setting="reducedMotion"> Reduce flashes and motion</label>
+        <label class="check"><input type="checkbox" data-setting="showTutorial"> Show launch tutorial</label>
+        <h3>CONTROLS</h3>
+        <div class="bindings">${bindings}</div>
+        <div class="btns"><button class="primary" data-close>Done</button></div>
+        <p class="settings-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>`;
+  root().appendChild(overlay);
+  overlayEl = overlay;
+  const status = overlay.querySelector<HTMLElement>('.settings-status')!;
+  const persistSettings = (): void => {
+    try {
+      saveSettings(settings);
+      applyGameSettings(settings);
+      window.dispatchEvent(new CustomEvent('asteroid-breaker-settings-changed'));
+      status.textContent = 'Settings saved.';
+    } catch (error) {
+      status.textContent = error instanceof Error ? error.message : 'Settings could not be saved.';
+    }
+  };
+  for (const input of Array.from(overlay.querySelectorAll<HTMLInputElement>('[data-setting]'))) {
+    const key = input.dataset.setting as 'aimSensitivity' | 'volume' | 'hudScale' | 'screenShake' | 'reducedMotion' | 'showTutorial';
+    const isToggle = key === 'screenShake' || key === 'reducedMotion' || key === 'showTutorial';
+    input.type = isToggle ? 'checkbox' : 'range';
+    if (isToggle) input.checked = settings[key];
+    else {
+      input.value = String(settings[key]);
+      const output = overlay.querySelector<HTMLOutputElement>(`[data-value="${key}"]`)!;
+      const updateOutput = (): void => {
+        output.value = key === 'volume' ? `${Math.round(Number(input.value) * 100)}%` : `${Number(input.value).toFixed(2)}×`;
+      };
+      updateOutput();
+      input.addEventListener('input', () => {
+        settings[key] = Number(input.value);
+        updateOutput();
+        persistSettings();
+      });
+    }
+    if (isToggle) input.addEventListener('change', () => {
+      settings[key] = input.checked;
+      persistSettings();
+    });
+  }
+  for (const select of Array.from(overlay.querySelectorAll<HTMLSelectElement>('[data-binding]'))) {
+    select.addEventListener('change', () => {
+      settings.bindings[select.dataset.binding as ControlAction] = select.value;
+      persistSettings();
+    });
+  }
+  overlay.querySelector('[data-close]')?.addEventListener('click', onClose);
+  overlay.querySelector<HTMLSelectElement>('[data-binding]')?.focus();
+}
+
 export interface MenuActions {
   playAi: () => void;
   newGame: () => void;
-  pvp: () => void;
+  pvp: (ranked: boolean) => void;
   authenticate: (username: string, password: string, register: boolean) => Promise<void>;
   signOut: () => Promise<void>;
   selectPilot: (pilot: PilotId) => void;
   selectSkin: (skin: ShipSkinId) => void;
+  selectWeapon: (weapon: WeaponId) => void;
   claimDaily: (id: string) => void;
 }
 
@@ -325,7 +461,7 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
     ? `<div class="save">Saved run: Sector ${save.sector + 1} (${SECTORS[save.sector].name}) | Cash ${money(save.money)} | ${upgrades} upgrades</div>`
     : '';
   const accountPanel = account
-    ? `<div class="account-panel"><div><b>Signed in:</b> ${account.username}</div><button data-account="logout">Sign out</button><div class="account-status" role="status"></div></div>`
+    ? `<div class="account-panel"><div><b>Signed in:</b> ${account.username}</div><button data-account="logout">Sign out</button><div id="pvp-stats" class="pvp-stats" role="status">Loading PvP record...</div><div class="account-status" role="status"></div></div>`
     : `<form class="account-panel" id="account-form">
         <label>Username <input name="username" minlength="3" maxlength="24" autocomplete="username" required></label>
         <label>Password <input name="password" type="password" minlength="10" maxlength="128" autocomplete="current-password" required></label>
@@ -347,6 +483,9 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
         .map((skin) => `<option value="${skin.id}" ${save.selectedSkin === skin.id ? 'selected' : ''}>${skin.name}</option>`)
         .join('')
     : '<option value="industrial">Industrial</option>';
+  const weaponOptions = WEAPONS.map((weapon) =>
+    `<option value="${weapon.id}" ${save?.selectedWeapon === weapon.id ? 'selected' : ''}>${weapon.name} — ${weapon.description}</option>`,
+  ).join('');
   o.innerHTML = `
     <div class="win menu-body">
       <div class="wt">Asteroid Breaker Mining Co.</div>
@@ -358,12 +497,13 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
         <div class="loadout">
           <label>Pilot <select id="pilot-select">${pilotOptions}</select></label>
           <label>Ship skin <select id="skin-select">${skinOptions}</select></label>
+          <label>Weapon <select id="weapon-select">${weaponOptions}</select></label>
         </div>
         ${dailyPanel}
         <div class="account-wrap"><b>ASTEROID BREAKER ACCOUNT</b>${accountPanel}</div>
         <ul class="how">
-          <li><b>WASD</b> thrust (you drift - plan your stops)</li>
-          <li><b>Mouse</b> aim, <b>Space</b> or <b>left button</b> fires, <b>Shift</b> is turbo (burns fuel fast)</li>
+          <li>Move, aim and fire with keyboard/mouse or on-screen touch controls</li>
+          <li>Campaign sectors require both the quota and the displayed mission objective to open the next gate</li>
           <li><b>E</b> dock at the station to sell, repair and upgrade</li>
           <li>Daily contracts reward credits and help unlock pilots and ship skins</li>
           <li>Play against AI offline, or sign in to join live PvP battles</li>
@@ -377,10 +517,19 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
   ai.addEventListener('click', actions.playAi);
   box.appendChild(ai);
   const pvp = document.createElement('button');
-  pvp.textContent = 'PvP';
+  pvp.textContent = 'Casual PvP';
   pvp.disabled = !account;
   pvp.title = account ? 'Join a live space battle' : 'Sign in to play online';
-  pvp.addEventListener('click', actions.pvp);
+  const pvpMode = document.createElement('select');
+  pvpMode.className = 'pvp-mode';
+  pvpMode.setAttribute('aria-label', 'PvP matchmaking mode');
+  pvpMode.innerHTML = '<option value="casual">Casual</option><option value="ranked">Ranked season</option>';
+  pvpMode.disabled = !account;
+  pvpMode.addEventListener('change', () => {
+    pvp.textContent = pvpMode.value === 'ranked' ? 'Ranked PvP' : 'Casual PvP';
+  });
+  pvp.addEventListener('click', () => actions.pvp(pvpMode.value === 'ranked'));
+  box.appendChild(pvpMode);
   box.appendChild(pvp);
   const n = document.createElement('button');
   n.textContent = 'New AI Campaign';
@@ -389,6 +538,10 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
     actions.newGame();
   });
   box.appendChild(n);
+  const settingsButton = document.createElement('button');
+  settingsButton.textContent = 'Settings';
+  settingsButton.addEventListener('click', () => showSettings(() => showMenu(save, account, actions, notice)));
+  box.appendChild(settingsButton);
 
   const pilot = o.querySelector('#pilot-select') as HTMLSelectElement;
   pilot.disabled = !save;
@@ -396,6 +549,9 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
   const skin = o.querySelector('#skin-select') as HTMLSelectElement;
   skin.disabled = !save;
   skin.addEventListener('change', () => actions.selectSkin(skin.value as ShipSkinId));
+  const weapon = o.querySelector('#weapon-select') as HTMLSelectElement;
+  weapon.disabled = !save;
+  weapon.addEventListener('change', () => actions.selectWeapon(weapon.value as WeaponId));
   o.querySelectorAll<HTMLButtonElement>('[data-claim]').forEach((button) => {
     button.addEventListener('click', () => actions.claimDaily(button.dataset.claim ?? ''));
   });
@@ -546,9 +702,17 @@ function renderShop(): void {
       <p class="note">Contracts are filled automatically when you dock with enough ore. Late contracts pay nothing.</p>`;
   }
 
-  const reached = save.sectorEarned >= sec.goal;
+  const quotaReached = save.sectorEarned >= sec.goal;
+  const mission = CAMPAIGN_OBJECTIVES[sector];
+  const missionDone = campaignObjectiveComplete(save);
   const pct = Math.min(100, (save.sectorEarned / sec.goal) * 100);
-  const gate = reached ? (api.gateReady() ? 'Warp gate open' : 'Defeat the Dreadnought') : 'Quota not met';
+  const gate = api.gateReady()
+    ? 'Warp gate open'
+    : sec.boss
+      ? 'Meet quota and mission, then defeat the Dreadnought'
+      : !quotaReached
+        ? `Quota: ${money(sec.goal - save.sectorEarned)} more`
+        : `Mission: ${mission.description} (${objectiveProgress(save)}/${mission.target})`;
   box.innerHTML = `
     <div class="wt"><span>HOME STATION - ${sec.name.toUpperCase()}</span><button class="x" data-act="launch" title="Launch (E)">X</button></div>
     <div class="wb">
@@ -558,7 +722,7 @@ function renderShop(): void {
       </div>
       <div class="tabbody">${body}</div>
       <div class="statusbar">
-        <div class="quota"><span>Sector quota</span><div class="track goal"><i style="width:${pct}%"></i></div><span>${money(save.sectorEarned)} / ${money(sec.goal)}</span><span class="gate">${gate}</span></div>
+        <div class="quota"><span>Sector quota</span><div class="track goal"><i style="width:${pct}%"></i></div><span>${money(save.sectorEarned)} / ${money(sec.goal)}</span><span class="gate">${missionDone ? 'Mission complete · ' : ''}${gate}</span></div>
         <button class="primary" data-act="launch">Launch (E)</button>
       </div>
     </div>`;

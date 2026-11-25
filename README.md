@@ -13,9 +13,12 @@ Play: https://dagavedant.github.io/Space-Mining-Mission/
 - Ore prices move with the market, so watch for shortages and booms.
 - Pirates steal cargo and flee. Shoot them to get it back. Faster, denser asteroid traffic, stronger black holes and gravity-pulling planets add hazards; being pulled into a planet destroys your ship.
 - Earn each sector's goal to open the warp gate. Six sectors include new pirate classes and a final Dreadnought encounter.
+- Each sector also has a required objective; meet both it and the earnings quota to unlock the gate. Objective completion grants a credit bonus.
 - Upgrade hull capacity and regeneration, sprint fuel recharge, shields, ore scanning and refining. Mining drones target valuable ore faster. Select unlocked pilots and ship skins, and complete rotating daily quests.
-- Esc pauses, M mutes. AI progress saves in localStorage and syncs to your account when signed in.
-- PvP requires an account and an available backend service.
+- Esc pauses, M mutes. The settings menu supports key rebinding, aim sensitivity, volume, screen shake, reduced motion, HUD scaling and an optional launch tutorial. Settings and AI progress save locally; campaign progress syncs to your account when signed in.
+- Touch controls support movement, aiming/firing and boosting on mobile layouts. Landscape orientation is recommended.
+- The minimap marks gravity wells, planets, pirates and the warp gate. Pirates and the Dreadnought show visual attack warnings; sector debriefs recap mining, combat, damage and hazard alerts.
+- PvP requires an account and an available backend service. Choose casual or seasonal ranked matchmaking, see live connection quality, review your rating and the top three pilots, and rematch after each match.
 
 ## Development
 
@@ -31,7 +34,7 @@ Stack: Phaser 3, TypeScript, Vite, Vitest. All art is drawn procedurally and all
 
 ## Backend
 
-The backend provides account authentication, versioned cloud saves, PvP matchmaking, authoritative 1v1 combat, and persistent PvP records. The frontend keeps localStorage saves for offline play and migrates existing v1 saves; signed-in saves sync with the backend.
+The backend provides account authentication, versioned cloud saves, casual and ranked PvP matchmaking, authoritative 1v1 combat, seasonal ratings, a leaderboard, and persistent PvP records. The frontend keeps localStorage saves for offline play and migrates existing v1/v2 saves; signed-in saves sync with the backend.
 
 ```sh
 cd backend

@@ -92,6 +92,42 @@ export const SHIP_SKINS: ShipSkinDef[] = [
   { id: 'void', name: 'Voidglass', tint: 0xd996ff },
 ];
 
+export type WeaponId = 'miner' | 'scatter' | 'lance';
+
+export interface WeaponDef {
+  id: WeaponId;
+  name: string;
+  description: string;
+  damageMultiplier: number;
+  fireDelayMultiplier: number;
+  projectiles: number;
+  spread: number;
+}
+
+export const WEAPONS: WeaponDef[] = [
+  { id: 'miner', name: 'Mining Blaster', description: 'Balanced damage and firing speed.', damageMultiplier: 1, fireDelayMultiplier: 1, projectiles: 1, spread: 0 },
+  { id: 'scatter', name: 'Scatter Cannon', description: 'Three light shots fan out at close range.', damageMultiplier: 0.48, fireDelayMultiplier: 1.35, projectiles: 3, spread: 0.16 },
+  { id: 'lance', name: 'Pulse Lance', description: 'A heavy, precise shot with slower follow-up.', damageMultiplier: 2.2, fireDelayMultiplier: 1.7, projectiles: 1, spread: 0 },
+];
+
+export type ObjectiveMetric = 'ore' | 'pirates';
+
+export interface CampaignObjective {
+  metric: ObjectiveMetric;
+  target: number;
+  description: string;
+  reward: number;
+}
+
+export const CAMPAIGN_OBJECTIVES: CampaignObjective[] = [
+  { metric: 'ore', target: 8, description: 'Recover 8 ore chunks', reward: 250 },
+  { metric: 'pirates', target: 2, description: 'Defeat 2 pirate ships', reward: 800 },
+  { metric: 'ore', target: 24, description: 'Recover 24 ore chunks', reward: 1500 },
+  { metric: 'pirates', target: 6, description: 'Defeat 6 pirate ships', reward: 3000 },
+  { metric: 'ore', target: 40, description: 'Recover 40 ore chunks', reward: 5000 },
+  { metric: 'pirates', target: 8, description: 'Defeat 8 pirate ships', reward: 8000 },
+];
+
 export interface SectorDef {
   name: string;
   size: number;
