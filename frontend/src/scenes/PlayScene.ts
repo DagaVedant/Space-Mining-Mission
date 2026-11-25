@@ -3,6 +3,7 @@ import { sfx } from '../audio';
 import { AST_R, VARIANTS, type Sz } from '../art';
 import {
   CAMPAIGN_OBJECTIVES,
+  DISCOVERY_SITES,
   ORES,
   ORE_IDS,
   SECTORS,
@@ -12,6 +13,7 @@ import {
   type OreId,
   type SectorDef,
   type UpgradeId,
+  type DiscoverySite,
 } from '../data';
 import { createMarket, priceOf, stepMarket, type MarketState } from '../market';
 import {
@@ -26,6 +28,7 @@ import {
   persist,
   objectiveProgress,
   recordCampaignProgress,
+  recordDiscovery,
   refuelCost,
   recordDailyProgress,
   repairCost,
@@ -38,7 +41,19 @@ import {
   type ShipStats,
 } from '../progress';
 import { pickWeighted } from '../rng';
-import { applyGameSettings, closeOverlay, closeShop, hud, money, openShop, shopOpen, showOverlay, showSettings, type ShopApi } from '../ui';
+import {
+  applyGameSettings,
+  closeOverlay,
+  closeShop,
+  hud,
+  money,
+  openShop,
+  shopOpen,
+  showDiscoveryLog,
+  showOverlay,
+  showSettings,
+  type ShopApi,
+} from '../ui';
 import { loadSettings, saveSettings, type ControlAction, type GameSettings } from '../settings';
 import { session } from '../session';
 import { mountTouchControls, type TouchControls } from '../touch';
@@ -51,6 +66,15 @@ interface Rock extends Spr {
   ore: OreId;
   sz: Sz;
   hp: number;
+}
+interface RuntimeDiscoverySite extends DiscoverySite {
+  worldX: number;
+  worldY: number;
+}
+interface DiscoveryView {
+  icon: Phaser.GameObjects.Image;
+  label: Phaser.GameObjects.Text;
+  ring: Phaser.GameObjects.Arc;
 }
 
 interface Planet {
@@ -118,6 +142,7 @@ const AST: Record<Sz, { hp: number; mass: number; drop: number; next: Sz | null;
 const SAFE_R = 270;
 const DOCK_R = 200;
 const GATE_R = 150;
+const DISCOVERY_INTERACT_R = 110;
 const WELL_R = 460;
 const PLANET_GRAVITY_R = 820;
 const FONT = 'Bahnschrift, "Segoe UI", system-ui, sans-serif';
@@ -161,6 +186,8 @@ export class PlayScene extends Phaser.Scene {
   private gy = 0;
   private wells: { x: number; y: number }[] = [];
   private planets: Planet[] = [];
+  private discoverySites: RuntimeDiscoverySite[] = [];
+  private discoveryViews = new Map<string, DiscoveryView>();
   private wellGfx!: Phaser.GameObjects.Graphics;
   private planetGfx!: Phaser.GameObjects.Graphics;
   private beamGfx!: Phaser.GameObjects.Graphics;
@@ -215,6 +242,11 @@ export class PlayScene extends Phaser.Scene {
     this.settings = loadSettings();
     applyGameSettings(this.settings);
   };
+  private discoveryLogHandler = (): void => {
+    if (this.paused || this.docked || this.dead || this.warping) return;
+    this.setPaused(true);
+    showDiscoveryLog(this.save, () => this.setPaused(false));
+  };
 
   private keyHandler = (e: KeyboardEvent): void => this.onKey(e);
   private blurHandler = (): void => {
@@ -234,6 +266,10 @@ export class PlayScene extends Phaser.Scene {
     this.cy = this.S / 2;
     this.gx = this.cx + 720;
     this.gy = this.cy;
+    this.discoverySites = DISCOVERY_SITES
+      .filter((site) => site.sector === this.save.sector)
+      .map((site) => ({ ...site, worldX: site.x * this.S, worldY: site.y * this.S }));
+    this.discoveryViews.clear();
     this.clock = 0;
     this.t = 0;
     this.docked = false;
@@ -278,6 +314,7 @@ export class PlayScene extends Phaser.Scene {
     this.buildBackground();
     this.buildGroups();
     this.buildStation();
+    this.buildDiscoverySites();
     this.buildFx();
     this.spawnWells();
     this.spawnPlanets();
@@ -303,6 +340,7 @@ export class PlayScene extends Phaser.Scene {
       window.removeEventListener('asteroid-breaker-settings-changed', this.settingsUpdateHandler);
       window.removeEventListener('rockbreaker-cloud-save-error', this.cloudErrorHandler);
       window.removeEventListener('rockbreaker-cloud-save-updated', this.cloudUpdateHandler);
+      document.getElementById('discovery-log')?.removeEventListener('click', this.discoveryLogHandler);
       closeShop();
       closeOverlay();
       this.touch.destroy();
@@ -312,6 +350,7 @@ export class PlayScene extends Phaser.Scene {
 
     hud.show();
     this.mm = hud.minimap();
+    document.getElementById('discovery-log')?.addEventListener('click', this.discoveryLogHandler);
     if (this.settings.showTutorial) this.showFlightSchool();
     hud.toast(`Sector ${this.save.sector + 1}: ${this.sector.name}`, 'info');
     if (this.save.sector === 0 && this.save.lifetime === 0) {
@@ -379,6 +418,41 @@ export class PlayScene extends Phaser.Scene {
     }
   }
 
+  private buildDiscoverySites(): void {
+    for (const site of this.discoverySites) {
+      const found = this.save.discoveries.includes(site.id);
+      const color = site.kind === 'wreck' ? 0x9ca9ad : site.kind === 'cache' ? 0xe7a849 : 0x64d4d7;
+      const ring = this.add.circle(site.worldX, site.worldY, 62, color, 0.06)
+        .setStrokeStyle(2, color, found ? 0.28 : 0.8)
+        .setDepth(1);
+      const icon = this.add
+        .image(site.worldX, site.worldY, `discovery_${site.kind}`)
+        .setDepth(2)
+        .setAlpha(found ? 0.42 : 1)
+        .setScale(site.kind === 'wreck' ? 1 : 0.92);
+      const label = this.add
+        .text(site.worldX, site.worldY + 45, found ? site.name : 'UNKNOWN SIGNAL', {
+          fontFamily: FONT,
+          fontSize: '13px',
+          color: found ? '#d0d0d0' : '#f1d27b',
+          stroke: '#07090c',
+          strokeThickness: 4,
+        })
+        .setOrigin(0.5)
+        .setDepth(3);
+      if (!found) {
+        this.tweens.add({ targets: ring, alpha: 0.35, yoyo: true, repeat: -1, duration: 900 });
+      } else {
+        ring.setAlpha(0.3);
+      }
+      this.discoveryViews.set(site.id, { icon, label, ring });
+    }
+  }
+
+  private nearDiscovery(x: number, y: number, distance: number): boolean {
+    return this.discoverySites.some((site) => Phaser.Math.Distance.Between(x, y, site.worldX, site.worldY) < distance);
+  }
+
   private updatePlanets(dt: number): void {
     for (const planet of this.planets) {
       const pull = (obj: Spr, scale: number): number => {
@@ -442,6 +516,7 @@ export class PlayScene extends Phaser.Scene {
         const y = rnd(500, this.S - 500);
         if (Phaser.Math.Distance.Between(x, y, this.cx, this.cy) < 900) continue;
         if (Phaser.Math.Distance.Between(x, y, this.gx, this.gy) < 700) continue;
+        if (this.nearDiscovery(x, y, 650)) continue;
         if (this.wells.some((w) => Phaser.Math.Distance.Between(x, y, w.x, w.y) < 1100)) continue;
         this.wells.push({ x, y });
         break;
@@ -457,6 +532,7 @@ export class PlayScene extends Phaser.Scene {
         const radius = rnd(100, 145);
         if (Phaser.Math.Distance.Between(x, y, this.cx, this.cy) < 1050) continue;
         if (Phaser.Math.Distance.Between(x, y, this.gx, this.gy) < 850) continue;
+        if (this.nearDiscovery(x, y, 900)) continue;
         if (this.wells.some((w) => Phaser.Math.Distance.Between(x, y, w.x, w.y) < 1250)) continue;
         if (this.planets.some((p) => Phaser.Math.Distance.Between(x, y, p.x, p.y) < radius + p.radius + 1100)) continue;
         this.planets.push({ x, y, radius, gravity: PLANET_GRAVITY_R });
@@ -481,6 +557,7 @@ export class PlayScene extends Phaser.Scene {
         const y = rnd(120, this.S - 120);
         if (Phaser.Math.Distance.Between(x, y, this.cx, this.cy) < 520) continue;
         if (Phaser.Math.Distance.Between(x, y, this.gx, this.gy) < 260) continue;
+        if (this.nearDiscovery(x, y, 150)) continue;
         if (this.wells.some((w) => Phaser.Math.Distance.Between(x, y, w.x, w.y) < 160)) continue;
         if (this.planets.some((p) => Phaser.Math.Distance.Between(x, y, p.x, p.y) < p.radius + 100)) continue;
         let clear = true;
@@ -1059,8 +1136,42 @@ export class PlayScene extends Phaser.Scene {
       return;
     }
     const p = this.player;
-    if (Phaser.Math.Distance.Between(p.x, p.y, this.cx, this.cy) < DOCK_R) this.dock();
-    else if (this.gateOpen() && Phaser.Math.Distance.Between(p.x, p.y, this.gx, this.gy) < GATE_R) this.warp();
+    if (Phaser.Math.Distance.Between(p.x, p.y, this.cx, this.cy) < DOCK_R) {
+      this.dock();
+      return;
+    }
+    if (this.gateOpen() && Phaser.Math.Distance.Between(p.x, p.y, this.gx, this.gy) < GATE_R) {
+      this.warp();
+      return;
+    }
+    const site = this.nearestUndiscoveredSite(p.x, p.y);
+    if (site && Phaser.Math.Distance.Between(p.x, p.y, site.worldX, site.worldY) < DISCOVERY_INTERACT_R) {
+      this.recoverDiscovery(site);
+    }
+  }
+
+  private nearestUndiscoveredSite(x: number, y: number): RuntimeDiscoverySite | undefined {
+    return this.discoverySites
+      .filter((site) => !this.save.discoveries.includes(site.id))
+      .sort((a, b) =>
+        Phaser.Math.Distance.Between(x, y, a.worldX, a.worldY) -
+        Phaser.Math.Distance.Between(x, y, b.worldX, b.worldY),
+      )[0];
+  }
+
+  private recoverDiscovery(site: RuntimeDiscoverySite): void {
+    const hadVoidSkin = this.save.unlockedSkins.includes('void');
+    if (!recordDiscovery(this.save, site.id)) return;
+    this.earn(site.reward);
+    persist(this.save);
+    const view = this.discoveryViews.get(site.id);
+    view?.icon.setAlpha(0.42);
+    view?.label.setText(site.name).setColor('#d0d0d0');
+    view?.ring.setAlpha(0.3).setStrokeStyle(2, 0x8bc97c, 0.35);
+    hud.toast(`${site.name} recovered · ${money(site.reward)} credits.`, 'good');
+    if (!hadVoidSkin && this.save.unlockedSkins.includes('void')) {
+      hud.toast('Discovery milestone: Voidglass ship skin unlocked.', 'good');
+    }
   }
 
   private gateOpen(): boolean {
@@ -1879,6 +1990,7 @@ export class PlayScene extends Phaser.Scene {
           const y = rnd(120, this.S - 120);
           if (Phaser.Math.Distance.Between(x, y, this.cx, this.cy) < 520) continue;
           if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < 1000) continue;
+          if (this.nearDiscovery(x, y, 150)) continue;
           if (this.wells.some((w) => Phaser.Math.Distance.Between(x, y, w.x, w.y) < 160)) continue;
           if (this.planets.some((p) => Phaser.Math.Distance.Between(x, y, p.x, p.y) < p.radius + 100)) continue;
           this.spawnRock(x, y, 'L', pickWeighted(this.sector.weights, Math.random));
@@ -1906,9 +2018,9 @@ export class PlayScene extends Phaser.Scene {
     const p = this.player;
     const dS = Phaser.Math.Distance.Between(p.x, p.y, this.cx, this.cy);
     const dG = Phaser.Math.Distance.Between(p.x, p.y, this.gx, this.gy);
-    if (dS < DOCK_R) hud.hint('E - Dock at station');
+    if (dS < DOCK_R) hud.hint(`${this.settings.bindings.interact} - Dock at station`);
     else if (!this.sector.boss && dG < GATE_R + 60) {
-      if (this.gateOpen()) hud.hint(`E - Warp to ${SECTORS[this.save.sector + 1].name}`);
+      if (this.gateOpen()) hud.hint(`${this.settings.bindings.interact} - Warp to ${SECTORS[this.save.sector + 1].name}`);
       else {
         const objective = CAMPAIGN_OBJECTIVES[this.save.sector];
         const requirement = campaignObjectiveComplete(this.save)
@@ -1916,7 +2028,17 @@ export class PlayScene extends Phaser.Scene {
           : `${objective.description} (${objectiveProgress(this.save)}/${objective.target})`;
         hud.hint(`Gate sealed - ${requirement}`);
       }
-    } else hud.hint(null);
+    } else {
+      const site = this.nearestUndiscoveredSite(p.x, p.y);
+      if (site) {
+        const distance = Phaser.Math.Distance.Between(p.x, p.y, site.worldX, site.worldY);
+        hud.hint(
+          distance < DISCOVERY_INTERACT_R + 70
+            ? `${this.settings.bindings.interact} - Recover ${site.name} (+${money(site.reward)})`
+            : null,
+        );
+      } else hud.hint(null);
+    }
   }
 
   private updateHud(): void {
@@ -1943,6 +2065,8 @@ export class PlayScene extends Phaser.Scene {
         target: CAMPAIGN_OBJECTIVES[this.save.sector].target,
         complete: campaignObjectiveComplete(this.save),
       },
+      discoveries: this.save.discoveries.length,
+      discoveryTotal: DISCOVERY_SITES.length,
     });
   }
 
@@ -1965,6 +2089,13 @@ export class PlayScene extends Phaser.Scene {
       c.fillStyle = '#86a9c9';
       c.beginPath();
       c.arc(planet.x * k, planet.y * k, Math.max(2, planet.radius * k), 0, Math.PI * 2);
+      c.fill();
+    }
+    for (const site of this.discoverySites) {
+      const found = this.save.discoveries.includes(site.id);
+      c.fillStyle = found ? '#8bc97c' : site.kind === 'wreck' ? '#9ca9ad' : site.kind === 'cache' ? '#e7a849' : '#64d4d7';
+      c.beginPath();
+      c.arc(site.worldX * k, site.worldY * k, found ? 3 : 4, 0, Math.PI * 2);
       c.fill();
     }
     c.fillStyle = '#6a625a';

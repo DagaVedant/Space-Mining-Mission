@@ -18,6 +18,7 @@ Play: https://dagavedant.github.io/Space-Mining-Mission/
 - Esc pauses, M mutes. The settings menu supports key rebinding, aim sensitivity, volume, screen shake, reduced motion, HUD scaling and an optional launch tutorial. Settings and AI progress save locally; campaign progress syncs to your account when signed in.
 - Touch controls support movement, aiming/firing and boosting on mobile layouts. Landscape orientation is recommended.
 - The minimap marks gravity wells, planets, pirates and the warp gate. Pirates and the Dreadnought show visual attack warnings; sector debriefs recap mining, combat, damage and hazard alerts.
+- Find two fixed salvage sites in every sector. Recover wrecks, caches and relics for one-time credits; six discoveries unlock the Voidglass skin. Open the map's Log button to review your collection. Sites are optional and never block sector progression.
 - PvP requires an account and an available backend service. Choose casual or seasonal ranked matchmaking, see live connection quality, review your rating and the top three pilots, and rematch after each match.
 
 ## Development
@@ -34,7 +35,7 @@ Stack: Phaser 3, TypeScript, Vite, Vitest. All art is drawn procedurally and all
 
 ## Backend
 
-The backend provides account authentication, versioned cloud saves, casual and ranked PvP matchmaking, authoritative 1v1 combat, seasonal ratings, a leaderboard, and persistent PvP records. The frontend keeps localStorage saves for offline play and migrates existing v1/v2 saves; signed-in saves sync with the backend.
+The backend provides account authentication, versioned cloud saves, casual and ranked PvP matchmaking, authoritative 1v1 combat, seasonal ratings, a leaderboard, and persistent PvP records. The frontend keeps localStorage saves for offline play and migrates existing v1-v3 saves; signed-in saves sync with the backend.
 
 ```sh
 cd backend

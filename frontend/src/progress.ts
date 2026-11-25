@@ -5,6 +5,8 @@ import {
   SECTORS,
   SHIP_SKINS,
   CAMPAIGN_OBJECTIVES,
+  DISCOVERY_SITES,
+  DISCOVERY_SKIN_UNLOCK_AT,
   UPGRADES,
   type OreId,
   type PilotId,
@@ -18,7 +20,7 @@ export type Levels = Record<UpgradeId, number>;
 export type Cargo = Record<OreId, number>;
 
 export interface SaveData {
-  v: 3;
+  v: 4;
   money: number;
   lifetime: number;
   sector: number;
@@ -35,6 +37,7 @@ export interface SaveData {
   claimedDaily: string[];
   objectiveProgress: number[];
   completedObjectives: number[];
+  discoveries: string[];
   updatedAt: number;
 }
 
@@ -88,7 +91,7 @@ export function newSave(): SaveData {
   for (const u of UPGRADES) levels[u.id] = 0;
   const date = utcDate();
   const save: SaveData = {
-    v: 3,
+    v: 4,
     money: 60,
     lifetime: 0,
     sector: 0,
@@ -105,6 +108,7 @@ export function newSave(): SaveData {
     claimedDaily: [],
     objectiveProgress: Array.from({ length: SECTORS.length }, () => 0),
     completedObjectives: [],
+    discoveries: [],
     updatedAt: Date.now(),
   };
   refreshUnlocks(save);
@@ -220,6 +224,13 @@ export function recordCampaignProgress(save: SaveData, metric: 'ore' | 'pirates'
   return true;
 }
 
+export function recordDiscovery(save: SaveData, id: string): boolean {
+  if (!DISCOVERY_SITES.some((site) => site.id === id) || save.discoveries.includes(id)) return false;
+  save.discoveries.push(id);
+  refreshUnlocks(save);
+  return true;
+}
+
 export function ensureDailyQuests(save: SaveData, date = utcDate()): DailyQuest[] {
   if (save.dailyQuestDate !== date) {
     save.dailyQuestDate = date;
@@ -259,7 +270,8 @@ export function refreshUnlocks(save: SaveData): void {
   }
   const skinAtSector: Record<ShipSkinId, number> = { industrial: 0, cobalt: 1, ember: 2, void: 4 };
   for (const skin of SHIP_SKINS) {
-    if (save.sector >= skinAtSector[skin.id] && !save.unlockedSkins.includes(skin.id)) {
+    const discoveryUnlock = skin.id === 'void' && save.discoveries.length >= DISCOVERY_SKIN_UNLOCK_AT;
+    if ((save.sector >= skinAtSector[skin.id] || discoveryUnlock) && !save.unlockedSkins.includes(skin.id)) {
       save.unlockedSkins.push(skin.id);
     }
   }
@@ -324,7 +336,7 @@ export function normalizeSave(value: unknown): SaveData | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const data = value as Record<string, unknown>;
   const version = data.v;
-  if (version !== 1 && version !== 2 && version !== 3) return null;
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4) return null;
   const base = newSave();
   const sector = typeof data.sector === 'number' && Number.isInteger(data.sector)
     ? Math.min(SECTORS.length - 1, Math.max(0, data.sector))
@@ -373,6 +385,10 @@ export function normalizeSave(value: unknown): SaveData | null {
   const claimedDaily = Array.isArray(data.claimedDaily)
     ? data.claimedDaily.filter((id): id is string => typeof id === 'string')
     : [];
+  const knownDiscoveryIds = new Set(DISCOVERY_SITES.map((site) => site.id));
+  const discoveries = Array.isArray(data.discoveries)
+    ? [...new Set(data.discoveries.filter((id): id is string => typeof id === 'string' && knownDiscoveryIds.has(id)))]
+    : [];
   const save: SaveData = {
     ...base,
     money: typeof data.money === 'number' && Number.isFinite(data.money) ? Math.max(0, data.money) : base.money,
@@ -395,8 +411,9 @@ export function normalizeSave(value: unknown): SaveData | null {
     claimedDaily,
     objectiveProgress: objectiveProgressBySector,
     completedObjectives: uniqueCompletedObjectives,
+    discoveries,
     updatedAt: version >= 2 && typeof data.updatedAt === 'number' && Number.isFinite(data.updatedAt) ? data.updatedAt : 0,
-    v: 3,
+    v: 4,
   };
   refreshUnlocks(save);
   return save;
@@ -421,7 +438,7 @@ export function loadSave(): SaveData | null {
 
 export function persist(save: SaveData, sync = true, touch = true): void {
   try {
-    save.v = 3;
+    save.v = 4;
     if (touch) save.updatedAt = Date.now();
     localStorage.setItem(KEY, JSON.stringify(save));
     localStorage.removeItem(LEGACY_KEY);

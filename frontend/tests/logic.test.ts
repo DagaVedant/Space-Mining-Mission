@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { ORE_IDS, SECTORS, UPGRADES } from '../src/data';
+import { DISCOVERY_SITES, ORE_IDS, SECTORS, UPGRADES } from '../src/data';
 import { createMarket, stepMarket } from '../src/market';
 import {
   addEarnings,
@@ -20,6 +20,7 @@ import {
   persist,
   resolveContracts,
   recordCampaignProgress,
+  recordDiscovery,
   sectorGoalReached,
   statsFor,
   utcDate,
@@ -171,6 +172,42 @@ describe('campaign', () => {
     expect(save?.objectiveProgress[2]).toBe(24);
     expect(save?.completedObjectives).toEqual([0, 1, 2]);
     expect(save?.selectedWeapon).toBe('lance');
+    expect(save?.v).toBe(4);
+    expect(save?.discoveries).toEqual([]);
+  });
+  it('records each known discovery once and unlocks Voidglass at the collection milestone', () => {
+    const save = newSave();
+    expect(recordDiscovery(save, 'not-a-real-site')).toBe(false);
+    for (const site of DISCOVERY_SITES.slice(0, 5)) expect(recordDiscovery(save, site.id)).toBe(true);
+    expect(save.unlockedSkins).not.toContain('void');
+    expect(recordDiscovery(save, DISCOVERY_SITES[5]!.id)).toBe(true);
+    expect(save.unlockedSkins).toContain('void');
+    expect(recordDiscovery(save, DISCOVERY_SITES[5]!.id)).toBe(false);
+    expect(save.discoveries).toHaveLength(6);
+  });
+  it('defines two safe, stable discovery sites for every sector', () => {
+    expect(new Set(DISCOVERY_SITES.map((site) => site.id)).size).toBe(DISCOVERY_SITES.length);
+    expect(new Set(DISCOVERY_SITES.map((site) => site.kind))).toEqual(new Set(['wreck', 'cache', 'relic']));
+    for (let sector = 0; sector < SECTORS.length; sector++) {
+      const sites = DISCOVERY_SITES.filter((site) => site.sector === sector);
+      expect(sites).toHaveLength(2);
+      for (const site of sites) {
+        expect(site.x).toBeGreaterThan(0);
+        expect(site.x).toBeLessThan(1);
+        expect(site.y).toBeGreaterThan(0);
+        expect(site.y).toBeLessThan(1);
+        const gateX = 0.5 + 720 / SECTORS[sector]!.size;
+        expect(Math.hypot(site.x - 0.5, site.y - 0.5)).toBeGreaterThan(0.25);
+        expect(Math.hypot(site.x - gateX, site.y - 0.5)).toBeGreaterThan(0.25);
+      }
+    }
+  });
+  it('normalizes discovery IDs to known unique site identifiers', () => {
+    const save = normalizeSave({
+      v: 4,
+      discoveries: ['kuiper-morrow-wreck', 'unknown-id', 'kuiper-morrow-wreck'],
+    });
+    expect(save?.discoveries).toEqual(['kuiper-morrow-wreck']);
   });
 });
 
@@ -205,7 +242,7 @@ describe('save', () => {
       won: false,
     }));
     const save = loadSave();
-    expect(save?.v).toBe(3);
+    expect(save?.v).toBe(4);
     expect(save?.money).toBe(999);
     expect(save?.levels.cannon).toBe(2);
     expect(save?.selectedPilot).toBe('prospector');

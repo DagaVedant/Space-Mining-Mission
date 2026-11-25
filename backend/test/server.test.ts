@@ -98,7 +98,7 @@ test('accounts, versioned cloud saves, and authoritative PvP matches work', asyn
   let firing: ReturnType<typeof setInterval> | undefined;
 
   const initialSave = {
-    v: 3,
+    v: 4,
     money: 60,
     lifetime: 0,
     sector: 0,
@@ -108,6 +108,7 @@ test('accounts, versioned cloud saves, and authoritative PvP matches work', asyn
     objectiveProgress: [0, 0, 0, 0, 0, 0],
     completedObjectives: [],
     selectedWeapon: 'miner',
+    discoveries: ['kuiper-morrow-wreck'],
   };
   const saved = await fetch(`${baseUrl}/api/save`, {
     method: 'PUT',
@@ -116,6 +117,18 @@ test('accounts, versioned cloud saves, and authoritative PvP matches work', asyn
   });
   assert.equal(saved.status, 200);
   assert.equal((await saved.json() as { revision: number }).revision, 1);
+  const loadedSave = await fetch(`${baseUrl}/api/save`, {
+    headers: { Authorization: `Bearer ${first.token}` },
+  });
+  const loadedPayload = await loadedSave.json() as { save: { v: number; discoveries: string[] } };
+  assert.equal(loadedPayload.save.v, 4);
+  assert.deepEqual(loadedPayload.save.discoveries, ['kuiper-morrow-wreck']);
+  const invalidSave = await fetch(`${baseUrl}/api/save`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${first.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ save: { ...initialSave, discoveries: 'invalid' }, revision: 1 }),
+  });
+  assert.equal(invalidSave.status, 400);
   const staleWrite = await fetch(`${baseUrl}/api/save`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${first.token}`, 'Content-Type': 'application/json' },

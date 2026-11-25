@@ -312,7 +312,7 @@ function isSavePayload(value: unknown): value is SavePayload {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const save = value as Record<string, unknown>;
   return (
-    (save.v === 1 || save.v === 2 || save.v === 3) &&
+    (save.v === 1 || save.v === 2 || save.v === 3 || save.v === 4) &&
     typeof save.money === 'number' &&
     Number.isFinite(save.money) &&
     save.money >= 0 &&
@@ -329,7 +329,11 @@ function isSavePayload(value: unknown): value is SavePayload {
     !!save.levels &&
     typeof save.levels === 'object' &&
     !Array.isArray(save.levels) &&
-    typeof save.won === 'boolean'
+    typeof save.won === 'boolean' &&
+    (save.v !== 4 ||
+      (Array.isArray(save.discoveries) &&
+        save.discoveries.length <= 100 &&
+        save.discoveries.every((id) => typeof id === 'string' && /^[a-z0-9-]{1,48}$/.test(id))))
   );
 }
 

@@ -371,6 +371,58 @@ function makePlanet(scene: Phaser.Scene, key: string, colors: [number, number, n
   bake(g, key, 256, 256);
 }
 
+function makeDiscoveryWreck(scene: Phaser.Scene): void {
+  const g = newG(scene);
+  const hull: P[] = [[5, 28], [20, 10], [66, 4], [91, 20], [76, 35], [33, 39], [16, 48]];
+  fill(g, hull, 0x555c63);
+  fill(g, [[20, 10], [66, 4], [55, 20], [8, 29]], 0x7d858b);
+  fill(g, [[35, 22], [54, 18], [62, 28], [39, 31]], 0x18232a);
+  outline(g, hull, 0x15191c, 3);
+  g.lineStyle(3, 0xe8832a, 0.9);
+  g.lineBetween(23, 36, 44, 34);
+  g.fillStyle(0x39758a, 1);
+  g.fillCircle(51, 24, 4);
+  g.fillStyle(0x22272b, 1);
+  g.fillRect(76, 12, 18, 5);
+  g.fillStyle(0x8c4a34, 1);
+  g.fillRect(78, 20, 13, 4);
+  bake(g, 'discovery_wreck', 100, 54);
+}
+
+function makeDiscoveryCache(scene: Phaser.Scene): void {
+  const g = newG(scene);
+  g.fillStyle(0x30383e, 1);
+  g.fillRoundedRect(5, 10, 48, 34, 3);
+  g.fillStyle(0x626d72, 1);
+  g.fillRect(9, 14, 40, 6);
+  g.lineStyle(2, 0x15191c, 1);
+  g.strokeRoundedRect(5, 10, 48, 34, 3);
+  g.fillStyle(0xe8832a, 1);
+  g.fillRect(25, 20, 8, 16);
+  g.fillStyle(0xffd878, 1);
+  g.fillCircle(29, 27, 2);
+  g.lineStyle(2, 0x252a2d, 1);
+  g.lineBetween(12, 44, 7, 49);
+  g.lineBetween(46, 44, 51, 49);
+  bake(g, 'discovery_cache', 58, 52);
+}
+
+function makeDiscoveryRelic(scene: Phaser.Scene): void {
+  const g = newG(scene);
+  const crystal: P[] = [[28, 3], [47, 19], [42, 43], [27, 51], [9, 35], [11, 16]];
+  fill(g, crystal, 0x34758a);
+  fill(g, [[28, 3], [47, 19], [30, 25]], 0x8de2dc);
+  fill(g, [[28, 3], [30, 25], [11, 16]], 0x56b5bc);
+  fill(g, [[11, 16], [30, 25], [27, 51], [9, 35]], 0x28586f);
+  fill(g, [[30, 25], [47, 19], [42, 43], [27, 51]], 0x3c8294);
+  outline(g, crystal, 0x172b36, 2);
+  g.lineStyle(2, 0xe7d995, 0.9);
+  g.lineBetween(30, 25, 38, 21);
+  g.fillStyle(0xffd878, 0.9);
+  g.fillCircle(30, 26, 3);
+  bake(g, 'discovery_relic', 56, 56);
+}
+
 function makeGate(scene: Phaser.Scene): void {
   const size = 240;
   const c = size / 2;
@@ -513,6 +565,9 @@ export function buildTextures(scene: Phaser.Scene): void {
   makePirate(scene, 'pirate_bomber', 0x59406e, 0x7d5b9b, 0xb374d5, 0xff7c4a);
   makeDrone(scene);
   makeStation(scene);
+  makeDiscoveryWreck(scene);
+  makeDiscoveryCache(scene);
+  makeDiscoveryRelic(scene);
   makePlanet(scene, 'planet_0', [0x536d81, 0x82a6b0, 0x273b4d, 0x4ca48e]);
   makePlanet(scene, 'planet_1', [0x7d5e47, 0xb4885c, 0x47372f, 0xd5a968]);
   makePlanet(scene, 'planet_2', [0x594e7c, 0x9385b4, 0x302a4b, 0x58a9c5]);

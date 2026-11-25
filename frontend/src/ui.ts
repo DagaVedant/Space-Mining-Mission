@@ -1,5 +1,6 @@
 import {
   CAMPAIGN_OBJECTIVES,
+  DISCOVERY_SITES,
   ORES,
   ORE_IDS,
   PILOTS,
@@ -58,6 +59,8 @@ export interface HudState {
   market: MarketState;
   boss: { hp: number; max: number } | null;
   mission: { description: string; progress: number; target: number; complete: boolean };
+  discoveries: number;
+  discoveryTotal: number;
 }
 
 export interface ShopApi {
@@ -161,7 +164,7 @@ function buildHud(): void {
     <div id="hint" class="hidden"></div>
     <div id="pricebar" class="plate"><div class="pl">PRICES</div><div id="ticker"></div></div>
     <div class="keys" id="keys">WASD move | Shift turbo | Space or click fire (aim with mouse) | E dock / gate | Esc pause | M mute</div>
-    <div class="win mapwin"><div class="wt">MAP</div><canvas id="minimap" width="180" height="180"></canvas><div class="map-legend">White: ship · Orange: gate · Purple: gravity well · Blue: planet · Red: pirate</div></div>
+    <div class="win mapwin"><div class="wt"><span>MAP</span><button id="discovery-log" type="button" aria-label="Open discovery log">LOG <span id="discovery-count">0/0</span></button></div><canvas id="minimap" width="180" height="180"></canvas><div class="map-legend">White: ship · Orange: gate · Purple: gravity well · Blue: planet · Red: pirate · Gold: discovery site</div></div>
     <div id="dock">
       <div class="vitals"><div id="hearts" class="icons"></div><div id="bolts" class="icons"></div></div>
       <div id="shield-bar" class="xp shield hidden"><i id="b-shield"></i></div>
@@ -218,6 +221,7 @@ export const hud = {
     if (s.shieldMax > 0) setWidth('b-shield', (s.shield / s.shieldMax) * 100);
     setText('goal-text', s.earned >= s.goal ? 'Quota met' : `Quota ${money(s.earned)} / ${money(s.goal)}`);
     setText('mission-text', `${s.mission.complete ? '✓' : 'MISSION'} ${s.mission.description} · ${s.mission.progress}/${s.mission.target}`);
+    setText('discovery-count', `${s.discoveries}/${s.discoveryTotal}`);
     setText('v-cargo', `Hold ${used} / ${s.cargoMax}`);
     const cs = s.contracts
       .map((c) => {
@@ -330,6 +334,22 @@ export function showOverlay(title: string, body: string, buttons: OverlayButton[
   root().appendChild(o);
   overlayEl = o;
   (box.querySelector('button.primary') as HTMLElement | null)?.focus();
+}
+
+export function showDiscoveryLog(save: SaveData, onClose: () => void): void {
+  const rows = DISCOVERY_SITES.map((site) => {
+    const found = save.discoveries.includes(site.id);
+    const contents = found
+      ? `<b>${site.name}</b> · ${site.description}`
+      : 'Unidentified signal · Not recovered';
+    return `<li class="${found ? 'found' : 'unknown'}"><span>Sector ${site.sector + 1}</span> ${contents}</li>`;
+  }).join('');
+  showOverlay(
+    'DISCOVERY LOG',
+    `${save.discoveries.length} / ${DISCOVERY_SITES.length} sites recovered. Sites are optional and do not block sector gates.`,
+    [{ label: 'Back to flight', primary: true, onClick: onClose }],
+    `<ul class="discovery-log">${rows}</ul>`,
+  );
 }
 
 export function applyGameSettings(settings = loadSettings()): void {

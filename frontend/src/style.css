@@ -378,7 +378,30 @@ td em.down {
   padding: 3px;
 }
 .win.mapwin .wt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 0 0.3em;
+}
+.win.mapwin .wt button {
+  padding: 0.1em 0.35em;
+  font-size: 0.65em;
+}
+.discovery-log {
+  max-height: 48vh;
+  overflow: auto;
+  margin: 0.5em 0 0;
+  padding-left: 1.4em;
+}
+.discovery-log li {
+  margin: 0.35em 0;
+  line-height: 1.35;
+}
+.discovery-log li.found {
+  color: #d7edc1;
+}
+.discovery-log li.unknown {
+  color: #9da2a8;
 }
 .win.mapwin canvas {
   display: block;

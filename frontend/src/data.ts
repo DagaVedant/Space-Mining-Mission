@@ -128,6 +128,36 @@ export const CAMPAIGN_OBJECTIVES: CampaignObjective[] = [
   { metric: 'pirates', target: 8, description: 'Defeat 8 pirate ships', reward: 8000 },
 ];
 
+export type DiscoveryKind = 'wreck' | 'cache' | 'relic';
+
+export interface DiscoverySite {
+  id: string;
+  sector: number;
+  kind: DiscoveryKind;
+  name: string;
+  description: string;
+  x: number;
+  y: number;
+  reward: number;
+}
+
+export const DISCOVERY_SKIN_UNLOCK_AT = 6;
+
+export const DISCOVERY_SITES: DiscoverySite[] = [
+  { id: 'kuiper-morrow-wreck', sector: 0, kind: 'wreck', name: 'Morrow-7 Wreck', description: 'A battered prospecting ship, still carrying its last survey payout.', x: 0.18, y: 0.18, reward: 450 },
+  { id: 'kuiper-surveyor-cache', sector: 0, kind: 'cache', name: 'Surveyor Cache', description: 'A sealed emergency locker with credits and a hand-drawn belt chart.', x: 0.82, y: 0.82, reward: 300 },
+  { id: 'cinder-ashline-relic', sector: 1, kind: 'relic', name: 'Ashline Recorder', description: 'A recovered flight recorder marks a safe route through the Cinder Belt.', x: 0.18, y: 0.82, reward: 700 },
+  { id: 'cinder-hauler-wreck', sector: 1, kind: 'wreck', name: 'Prospector Derelict', description: 'The crew escaped, leaving a small but intact reserve-credit capsule.', x: 0.82, y: 0.18, reward: 600 },
+  { id: 'gravel-glass-cache', sector: 2, kind: 'cache', name: 'Glassfall Cache', description: 'A mineral survey team hid its spare operating funds before evacuating.', x: 0.18, y: 0.18, reward: 900 },
+  { id: 'gravel-beacon-relic', sector: 2, kind: 'relic', name: 'Old Beacon', description: 'A pre-colony beacon contains a fragment of the first sector maps.', x: 0.82, y: 0.82, reward: 1200 },
+  { id: 'maw-lantern-wreck', sector: 3, kind: 'wreck', name: 'Split Lantern', description: 'A retired tug has one sealed credit case left in its bridge locker.', x: 0.18, y: 0.82, reward: 1500 },
+  { id: 'maw-cobalt-cache', sector: 3, kind: 'cache', name: 'Cobalt Survey Cache', description: 'A cache of field notes and the crew’s unused hazard bonus.', x: 0.82, y: 0.18, reward: 1800 },
+  { id: 'shatter-quiet-relic', sector: 4, kind: 'relic', name: 'Quiet Signal', description: 'A repeating signal resolves into a stored salvage claim.', x: 0.18, y: 0.18, reward: 2200 },
+  { id: 'shatter-driftbreaker-wreck', sector: 4, kind: 'wreck', name: 'Driftbreaker', description: 'A mining skiff’s black box unlocks a forgotten corporate payout.', x: 0.82, y: 0.82, reward: 2500 },
+  { id: 'eclipse-frontier-cache', sector: 5, kind: 'cache', name: 'Frontier Reserve', description: 'A sealed reserve crate left for the next pilot to make it this far.', x: 0.18, y: 0.82, reward: 3200 },
+  { id: 'eclipse-first-light-relic', sector: 5, kind: 'relic', name: 'First Light Relic', description: 'The final beacon reveals the hidden history of the Eclipse Frontier.', x: 0.82, y: 0.18, reward: 4000 },
+];
+
 export interface SectorDef {
   name: string;
   size: number;
