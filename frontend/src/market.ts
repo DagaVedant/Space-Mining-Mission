@@ -15,10 +15,13 @@ export interface MarketState {
   time: number;
   nextEventAt: number;
   nextSnapshotAt: number;
+  nextTickAt: number;
 }
 
 const MIN_MULT = 0.45;
 const MAX_MULT = 2.6;
+// Prices move in discrete steps so they are readable, not a flickering ticker.
+const TICK = 5;
 
 function baseline(): Record<OreId, number> {
   return {
@@ -31,7 +34,7 @@ function baseline(): Record<OreId, number> {
 
 export function createMarket(rng: Rng): MarketState {
   const prices = baseline();
-  return { prices, prev: { ...prices }, events: [], time: 0, nextEventAt: 25 + rng() * 25, nextSnapshotAt: 5 };
+  return { prices, prev: { ...prices }, events: [], time: 0, nextEventAt: 25 + rng() * 25, nextSnapshotAt: 20, nextTickAt: TICK };
 }
 
 export function targetMult(m: MarketState, ore: OreId): number {
@@ -60,16 +63,19 @@ export function stepMarket(m: MarketState, dt: number, rng: Rng): string | null 
     started = label;
   }
   const base = baseline();
-  for (const ore of ORE_IDS) {
-    const target = base[ore] * targetMult(m, ore);
-    const noise = (rng() - 0.5) * base[ore] * 0.05 * Math.sqrt(dt);
-    let p = m.prices[ore] + (target - m.prices[ore]) * Math.min(1, 0.08 * dt) + noise;
-    p = Math.max(base[ore] * MIN_MULT, Math.min(base[ore] * MAX_MULT, p));
-    m.prices[ore] = p;
+  while (m.time >= m.nextTickAt) {
+    m.nextTickAt += TICK;
+    for (const ore of ORE_IDS) {
+      const target = base[ore] * targetMult(m, ore);
+      const noise = (rng() - 0.5) * base[ore] * 0.06;
+      let p = m.prices[ore] + (target - m.prices[ore]) * 0.12 + noise;
+      p = Math.max(base[ore] * MIN_MULT, Math.min(base[ore] * MAX_MULT, p));
+      m.prices[ore] = p;
+    }
   }
   if (m.time >= m.nextSnapshotAt) {
     m.prev = { ...m.prices };
-    m.nextSnapshotAt = m.time + 6;
+    m.nextSnapshotAt = m.time + 20;
   }
   return started;
 }
