@@ -31,9 +31,37 @@ function newG(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
   return scene.make.graphics({}, false);
 }
 
-function bake(g: Phaser.GameObjects.Graphics, key: string, w: number, h: number): void {
+// Textures are baked from smooth vector drawing, then snapped to a chunky pixel grid:
+// average down to a small bitmap, give it a hard on/off edge, scale back up unsmoothed.
+function pixelate(scene: Phaser.Scene, key: string, w: number, h: number): void {
+  const px = Math.max(1, Math.min(5, Math.round(Math.max(w, h) / 14)));
+  if (px < 2) return;
+  const src = scene.textures.get(key).getSourceImage() as HTMLCanvasElement;
+  if (!(src instanceof HTMLCanvasElement)) return;
+  const sw = Math.ceil(w / px);
+  const sh = Math.ceil(h / px);
+  const small = document.createElement('canvas');
+  small.width = sw;
+  small.height = sh;
+  const sctx = small.getContext('2d');
+  const ctx = src.getContext('2d');
+  if (!sctx || !ctx) return;
+  sctx.imageSmoothingQuality = 'high';
+  sctx.drawImage(src, 0, 0, sw, sh);
+  const data = sctx.getImageData(0, 0, sw, sh);
+  for (let i = 3; i < data.data.length; i += 4) data.data[i] = data.data[i] > 110 ? 255 : 0;
+  sctx.putImageData(data, 0, 0);
+  ctx.clearRect(0, 0, src.width, src.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(small, 0, 0, sw * px, sh * px);
+  (scene.textures.get(key) as Phaser.Textures.CanvasTexture).refresh?.();
+}
+
+function bake(g: Phaser.GameObjects.Graphics, key: string, w: number, h: number, pixel = true): void {
+  const scene = g.scene;
   g.generateTexture(key, w, h);
   g.destroy();
+  if (pixel) pixelate(scene, key, w, h);
 }
 
 function vec(pts: P[]): Phaser.Math.Vector2[] {
@@ -432,7 +460,7 @@ function makeStars(scene: Phaser.Scene): void {
       g.fillStyle(warm ? 0xffd9a8 : 0xcfe0f5, l.alpha * (0.5 + rng() * 0.5));
       g.fillRect(Math.floor(rng() * 512), Math.floor(rng() * 512), l.size, l.size);
     }
-    bake(g, l.key, 512, 512);
+    bake(g, l.key, 512, 512, false);
   });
 }
 

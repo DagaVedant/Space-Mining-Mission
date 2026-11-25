@@ -12,5 +12,5 @@ new Phaser.Game({
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
   physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 } } },
   scene: [MenuScene, PlayScene],
-  render: { antialias: true, roundPixels: false },
+  render: { pixelArt: true, antialias: false, roundPixels: true },
 });
