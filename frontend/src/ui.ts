@@ -470,13 +470,25 @@ export interface MenuActions {
   claimDaily: (id: string) => void;
 }
 
+type MenuView = 'home' | 'loadout' | 'contracts' | 'account' | 'how';
+
+// kept outside showMenu so a redraw (picking a pilot, claiming a contract) stays on the same page
+let menuView: MenuView = 'home';
+
+function menuPage(view: MenuView, title: string, body: string): string {
+  return `<section data-view="${view}" hidden>
+    <header class="menu-head"><button type="button" data-open="home">Back</button><h2>${title}</h2></header>
+    ${body}
+  </section>`;
+}
+
 export function showMenu(save: SaveData | null, account: Account | null, actions: MenuActions, notice = ''): void {
   closeOverlay();
   const o = document.createElement('div');
   o.className = 'menu';
   const upgrades = save ? Object.values(save.levels).reduce((a, b) => a + b, 0) : 0;
   const info = save
-    ? `<div class="save">Saved run: Sector ${save.sector + 1} (${SECTORS[save.sector].name}) | Cash ${money(save.money)} | ${upgrades} upgrades</div>`
+    ? `<p class="save">Sector ${save.sector + 1}, ${SECTORS[save.sector].name}<br>${money(save.money)} · ${upgrades} upgrades</p>`
     : '';
   const accountPanel = account
     ? `<div class="account-panel"><div><b>Signed in:</b> ${account.username}</div><button data-account="logout">Sign out</button><div id="pvp-stats" class="pvp-stats" role="status">Loading PvP record...</div><div class="account-status" role="status"></div></div>`
@@ -489,8 +501,8 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
   const currentSave = save ?? null;
   const quests = currentSave ? ensureDailyQuests(currentSave, utcDate()) : [];
   const dailyPanel = currentSave
-    ? `<div class="daily-panel"><b>DAILY CONTRACTS</b>${quests.map((quest) => dailyQuestRow(quest, currentSave)).join('')}</div>`
-    : '<div class="daily-panel"><b>DAILY CONTRACTS</b><span>Start a campaign to take on daily objectives.</span></div>';
+    ? `<div class="daily-panel">${quests.map((quest) => dailyQuestRow(quest, currentSave)).join('')}</div>`
+    : '<p class="menu-note">Start a campaign to take on daily objectives.</p>';
   const pilotOptions = save
     ? PILOTS.filter((pilot) => save.unlockedPilots.includes(pilot.id))
         .map((pilot) => `<option value="${pilot.id}" ${save.selectedPilot === pilot.id ? 'selected' : ''}>${pilot.name} — ${pilot.description}</option>`)
@@ -504,62 +516,105 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
   const weaponOptions = WEAPONS.map((weapon) =>
     `<option value="${weapon.id}" ${save?.selectedWeapon === weapon.id ? 'selected' : ''}>${weapon.name} — ${weapon.description}</option>`,
   ).join('');
+  const loadout = `${save ? '' : '<p class="menu-note">Start a campaign to change your loadout.</p>'}
+    <div class="loadout">
+      <label>Pilot <select id="pilot-select">${pilotOptions}</select></label>
+      <label>Ship skin <select id="skin-select">${skinOptions}</select></label>
+      <label>Weapon <select id="weapon-select">${weaponOptions}</select></label>
+    </div>`;
+  const how = `<ul class="how">
+    <li>Move, aim and fire with keyboard/mouse or on-screen touch controls</li>
+    <li>Campaign sectors require both the quota and the displayed mission objective to open the next gate</li>
+    <li><b>E</b> dock at the station to sell, repair and upgrade</li>
+    <li>Daily contracts reward credits and help unlock pilots and ship skins</li>
+    <li>Play against AI offline, or sign in to join live PvP battles</li>
+  </ul>`;
   o.innerHTML = `
     <div class="win menu-body">
-      <div class="wt">Asteroid Breaker Mining Co.</div>
       <div class="wb">
-        <h1>ASTEROID BREAKER</h1>
-        <p class="sub">Mine the belt. Build your ship. Take the fight online.</p>
-        <div class="btns"></div>
-        ${info}
-        <div class="loadout">
-          <label>Pilot <select id="pilot-select">${pilotOptions}</select></label>
-          <label>Ship skin <select id="skin-select">${skinOptions}</select></label>
-          <label>Weapon <select id="weapon-select">${weaponOptions}</select></label>
-        </div>
-        ${dailyPanel}
-        <div class="account-wrap"><b>ASTEROID BREAKER ACCOUNT</b>${accountPanel}</div>
-        <ul class="how">
-          <li>Move, aim and fire with keyboard/mouse or on-screen touch controls</li>
-          <li>Campaign sectors require both the quota and the displayed mission objective to open the next gate</li>
-          <li><b>E</b> dock at the station to sell, repair and upgrade</li>
-          <li>Daily contracts reward credits and help unlock pilots and ship skins</li>
-          <li>Play against AI offline, or sign in to join live PvP battles</li>
-        </ul>
+        <section data-view="home">
+          <h1>ASTEROID BREAKER</h1>
+          <p class="sub">Mine the belt. Build your ship. Take the fight online.</p>
+          <div class="menu-play"></div>
+          ${info}
+          <div class="menu-online"></div>
+          <p class="menu-status" role="status"></p>
+          <nav class="menu-nav" aria-label="Menu"></nav>
+        </section>
+        ${menuPage('loadout', 'Loadout', loadout)}
+        ${menuPage('contracts', 'Daily contracts', dailyPanel)}
+        ${menuPage('account', 'Account', accountPanel)}
+        ${menuPage('how', 'How to play', how)}
       </div>
     </div>`;
-  const box = o.querySelector('.btns') as HTMLElement;
-  const ai = document.createElement('button');
-  ai.className = 'primary';
-  ai.textContent = 'Play against AI';
-  ai.addEventListener('click', actions.playAi);
-  box.appendChild(ai);
-  const pvp = document.createElement('button');
-  pvp.textContent = 'Casual PvP';
-  pvp.disabled = !account;
-  pvp.title = account ? 'Join a live space battle' : 'Sign in to play online';
-  const pvpMode = document.createElement('select');
-  pvpMode.className = 'pvp-mode';
-  pvpMode.setAttribute('aria-label', 'PvP matchmaking mode');
-  pvpMode.innerHTML = '<option value="casual">Casual</option><option value="ranked">Ranked season</option>';
-  pvpMode.disabled = !account;
-  pvpMode.addEventListener('change', () => {
-    pvp.textContent = pvpMode.value === 'ranked' ? 'Ranked PvP' : 'Casual PvP';
+
+  const showView = (view: MenuView): void => {
+    menuView = view;
+    o.querySelectorAll<HTMLElement>('section[data-view]').forEach((section) => {
+      section.hidden = section.dataset.view !== view;
+    });
+  };
+  const focusView = (from: MenuView = 'home'): void => {
+    const find = (selector: string): HTMLElement | null => o.querySelector<HTMLElement>(selector);
+    const page = `section[data-view="${menuView}"]`;
+    const target =
+      menuView === 'home'
+        ? find(`.menu-nav [data-open="${from}"]`) ?? find('.menu-play button')
+        : find(`${page} input`) ?? find(`${page} button`);
+    target?.focus();
+  };
+  const open = (view: MenuView): void => {
+    const from = menuView;
+    showView(view);
+    focusView(from);
+  };
+
+  const button = (parent: string, label: string, onClick: () => void): HTMLButtonElement => {
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.textContent = label;
+    element.addEventListener('click', onClick);
+    o.querySelector(parent)?.appendChild(element);
+    return element;
+  };
+  const link = (label: string, view: MenuView): void => {
+    button('.menu-nav', label, () => open(view)).dataset.open = view;
+  };
+
+  button('.menu-play', save ? 'Continue campaign' : 'Play against AI', actions.playAi).className = 'primary';
+
+  if (account) {
+    const pvpMode = document.createElement('select');
+    pvpMode.className = 'pvp-mode';
+    pvpMode.setAttribute('aria-label', 'PvP matchmaking mode');
+    pvpMode.innerHTML = '<option value="casual">Casual</option><option value="ranked">Ranked season</option>';
+    const pvp = button('.menu-online', 'Casual PvP', () => actions.pvp(pvpMode.value === 'ranked'));
+    pvpMode.addEventListener('change', () => {
+      pvp.textContent = pvpMode.value === 'ranked' ? 'Ranked PvP' : 'Casual PvP';
+    });
+    o.querySelector('.menu-online')?.appendChild(pvpMode);
+  } else {
+    button('.menu-online', 'Sign in to play online', () => open('account'));
+  }
+
+  const ready = o.querySelectorAll('[data-claim]:not(:disabled)').length;
+  link('Loadout', 'loadout');
+  link(ready ? `Contracts (${ready} ready)` : 'Contracts', 'contracts');
+  link('Account', 'account');
+  button('.menu-nav', 'Settings', () => showSettings(() => showMenu(save, account, actions, notice)));
+  link('How to play', 'how');
+  if (save) {
+    button('.menu-nav', 'New campaign', () => {
+      if (window.confirm('Start over? Your current campaign save will be replaced.')) actions.newGame();
+    });
+  }
+
+  o.querySelectorAll<HTMLButtonElement>('.menu-head [data-open]').forEach((back) => {
+    back.addEventListener('click', () => open('home'));
   });
-  pvp.addEventListener('click', () => actions.pvp(pvpMode.value === 'ranked'));
-  box.appendChild(pvpMode);
-  box.appendChild(pvp);
-  const n = document.createElement('button');
-  n.textContent = 'New AI Campaign';
-  n.addEventListener('click', () => {
-    if (save && !window.confirm('Start over? Your current campaign save will be replaced.')) return;
-    actions.newGame();
+  o.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && menuView !== 'home') open('home');
   });
-  box.appendChild(n);
-  const settingsButton = document.createElement('button');
-  settingsButton.textContent = 'Settings';
-  settingsButton.addEventListener('click', () => showSettings(() => showMenu(save, account, actions, notice)));
-  box.appendChild(settingsButton);
 
   const pilot = o.querySelector('#pilot-select') as HTMLSelectElement;
   pilot.disabled = !save;
@@ -583,13 +638,22 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
     const data = new FormData(form);
     const username = String(data.get('username') ?? '').trim();
     const password = String(data.get('password') ?? '');
-    void actions.authenticate(username, password, submitter?.dataset.auth === 'register')
-      .catch((error: unknown) => setAccountStatus(o, error));
+    // a successful sign-in redraws the menu, which should land on the home page
+    menuView = 'home';
+    void actions.authenticate(username, password, submitter?.dataset.auth === 'register').catch((error: unknown) => {
+      menuView = 'account';
+      setAccountStatus(o, error);
+    });
   });
   root().appendChild(o);
   overlayEl = o;
-  if (notice) setAccountStatus(o, notice);
-  (box.querySelector('button.primary') as HTMLElement | null)?.focus();
+  if (notice) {
+    o.querySelectorAll('.menu-status, .account-status').forEach((status) => {
+      status.textContent = notice;
+    });
+  }
+  showView(menuView);
+  focusView();
 }
 
 function dailyQuestRow(quest: DailyQuest, save: SaveData): string {

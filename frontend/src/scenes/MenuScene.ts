@@ -53,15 +53,16 @@ export class MenuScene extends Phaser.Scene {
     this.drifters = [];
     this.scrollX = 0;
     this.stars = ['stars1', 'stars2', 'stars3'].map((k) => this.add.tileSprite(0, 0, 1280, 720, k).setOrigin(0));
-    const sizes: Sz[] = ['L', 'L', 'M', 'M', 'S'];
-    for (let i = 0; i < 16; i++) {
+    const sizes: Sz[] = ['L', 'M', 'S'];
+    // a few, starting clear of the menu panel on the left
+    for (let i = 0; i < 6; i++) {
       const sz = sizes[i % sizes.length];
       const ore = ORE_IDS[i % ORE_IDS.length];
       const img = this.add
-        .image(Math.random() * 1500 - 100, Math.random() * 720, `ast_${ore}_${sz}_${Math.floor(Math.random() * VARIANTS)}`)
+        .image(620 + i * 130, 70 + ((i * 263) % 580), `ast_${ore}_${sz}_${Math.floor(Math.random() * VARIANTS)}`)
         .setScale(0.9 + AST_R[sz] / 120)
-        .setAlpha(0.9);
-      this.drifters.push({ img, vx: -(8 + Math.random() * 22), vy: (Math.random() - 0.5) * 6, spin: (Math.random() - 0.5) * 12 });
+        .setAlpha(0.55);
+      this.drifters.push({ img, vx: -(5 + Math.random() * 7), vy: (Math.random() - 0.5) * 3, spin: (Math.random() - 0.5) * 8 });
     }
     this.shipPreview = this.add.image(980, 470, 'ship_industrial').setScale(2.2).setRotation(-0.3);
     this.tweens.add({ targets: this.shipPreview, y: 490, duration: 2600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
