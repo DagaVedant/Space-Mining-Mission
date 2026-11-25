@@ -7,7 +7,6 @@ import {
   ORES,
   ORE_IDS,
   SECTORS,
-  SHIP_SKINS,
   UPGRADES,
   WEAPONS,
   type OreId,
@@ -359,8 +358,6 @@ export class PlayScene extends Phaser.Scene {
     if (import.meta.env.DEV) (window as unknown as { __rb: PlayScene }).__rb = this;
   }
 
-  // ------------------------------------------------------------ build
-
   private buildBackground(): void {
     this.stars = ['stars1', 'stars2', 'stars3'].map((k, i) =>
       this.add
@@ -575,8 +572,7 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private buildPlayer(): void {
-    const skin = SHIP_SKINS.find((candidate) => candidate.id === this.save.selectedSkin) ?? SHIP_SKINS[0];
-    this.player = this.physics.add.sprite(this.cx + 260, this.cy, 'ship').setTint(skin.tint).setDepth(5);
+    this.player = this.physics.add.sprite(this.cx + 260, this.cy, `ship_${this.save.selectedSkin}`).setDepth(5);
     const b = this.player.body as Body;
     b.setCircle(14, 10, 10);
     b.setCollideWorldBounds(true);
@@ -606,8 +602,6 @@ export class PlayScene extends Phaser.Scene {
     ph.add.overlap(this.debris, this.pirates, (p, x) => this.onDebrisPirate(x as Debris, p as Pirate));
     ph.add.overlap(this.bosses, this.player, () => this.onBossRam());
   }
-
-  // ------------------------------------------------------------ spawning
 
   private spawnRock(x: number, y: number, sz: Sz, ore: OreId, vx?: number, vy?: number): Rock {
     const v = Math.floor(Math.random() * VARIANTS);
@@ -739,8 +733,6 @@ export class PlayScene extends Phaser.Scene {
     this.tweens.add({ targets: c, scale: 7, alpha: 0, duration: 600, onComplete: () => c.destroy() });
   }
 
-  // ------------------------------------------------------------ effects
-
   private burst(em: Emitter, x: number, y: number, n: number, tint?: number): void {
     if (tint !== undefined) em.setParticleTint(tint);
     em.explode(n, x, y);
@@ -765,8 +757,6 @@ export class PlayScene extends Phaser.Scene {
   private flash(text: string, kind: 'warn' | 'danger' | 'good', secs: number): void {
     this.flashMsg = { text, kind, t: secs };
   }
-
-  // ------------------------------------------------------------ economy helpers
 
   private earn(amount: number): void {
     addEarnings(this.save, amount);
@@ -822,7 +812,6 @@ export class PlayScene extends Phaser.Scene {
     const value = Math.round(units * priceOf(this.market, ore) * (0.7 + 0.12 * this.save.levels.yield));
     if (value <= 0) return;
     this.earn(value);
-    this.save.money += 0;
     this.floatText(x, y - 14, `+${money(value)}`, '#6fd0ff');
   }
 
@@ -837,8 +826,6 @@ export class PlayScene extends Phaser.Scene {
     for (const c of r.done) hud.toast(`Contract complete: ${c.qty} ${ORES[c.ore].name} for ${money(c.reward)}`, 'good');
     for (const c of r.expired) hud.toast(`Contract expired: ${c.qty} ${ORES[c.ore].name}`, 'bad');
   }
-
-  // ------------------------------------------------------------ damage
 
   private hurtPlayer(amount: number, silent = false): void {
     if (this.docked || this.dead || this.warping) return;
@@ -941,8 +928,6 @@ export class PlayScene extends Phaser.Scene {
     d.destroy();
     hud.toast('A mining drone was destroyed. Replaced when you next dock.', 'bad');
   }
-
-  // ------------------------------------------------------------ collision callbacks
 
   private onShipRock(r: Rock): void {
     if (this.hitCd > 0 || this.docked || this.dead) return;
@@ -1076,8 +1061,6 @@ export class PlayScene extends Phaser.Scene {
       );
     });
   }
-
-  // ------------------------------------------------------------ input
 
   private onKey(e: KeyboardEvent): void {
     if (e.repeat) return;
@@ -1336,8 +1319,6 @@ export class PlayScene extends Phaser.Scene {
     persist(s);
   }
 
-  // ------------------------------------------------------------ update
-
   update(_time: number, delta: number): void {
     if (this.paused || this.warping) return;
     const dt = Math.min(delta / 1000, 0.05);
@@ -1437,7 +1418,6 @@ export class PlayScene extends Phaser.Scene {
     if (this.touch.state.aim !== null) {
       p.rotation = this.touch.state.aim;
     } else if (shooting) {
-      // firing: aim at the mouse
       const w = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
       const aim = Math.atan2(w.y - p.y, w.x - p.x);
       p.rotation = Phaser.Math.Angle.RotateTo(p.rotation, aim, 10 * this.settings.aimSensitivity * dt);

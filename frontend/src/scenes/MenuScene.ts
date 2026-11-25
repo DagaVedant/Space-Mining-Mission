@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { sfx } from '../audio';
 import { AST_R, VARIANTS, buildTextures, type Sz } from '../art';
-import { ORE_IDS, type WeaponId } from '../data';
+import { ORE_IDS, SHIP_SKINS, type WeaponId } from '../data';
 import {
   authenticate,
   currentAccount,
@@ -29,9 +29,19 @@ export class MenuScene extends Phaser.Scene {
   private scrollX = 0;
   private menuEpoch = 0;
   private activeMenu = false;
+  private shipPreview!: Phaser.GameObjects.Image;
 
   constructor() {
     super('Menu');
+  }
+
+  preload(): void {
+    for (const skin of SHIP_SKINS) {
+      const key = `ship_${skin.id}`;
+      if (!this.textures.exists(key)) {
+        this.load.svg(key, `${import.meta.env.BASE_URL}assets/ships/${skin.id}.svg`);
+      }
+    }
   }
 
   create(): void {
@@ -53,8 +63,8 @@ export class MenuScene extends Phaser.Scene {
         .setAlpha(0.9);
       this.drifters.push({ img, vx: -(8 + Math.random() * 22), vy: (Math.random() - 0.5) * 6, spin: (Math.random() - 0.5) * 12 });
     }
-    const ship = this.add.image(980, 470, 'ship').setScale(2.2).setRotation(-0.3);
-    this.tweens.add({ targets: ship, y: 490, duration: 2600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.shipPreview = this.add.image(980, 470, 'ship_industrial').setScale(2.2).setRotation(-0.3);
+    this.tweens.add({ targets: this.shipPreview, y: 490, duration: 2600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 
     setCloudSyncHandler(syncCloudSave);
     this.showHome(loadSave());
@@ -80,6 +90,7 @@ export class MenuScene extends Phaser.Scene {
 
   private showHome(save: ReturnType<typeof newSave> | null, notice = ''): void {
     this.menuEpoch++;
+    this.shipPreview?.setTexture(`ship_${save?.selectedSkin ?? 'industrial'}`);
     const actions: MenuActions = {
       playAi: () => this.begin(save ?? newSave()),
       newGame: () => {

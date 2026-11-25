@@ -12,7 +12,7 @@ export const VARIANTS = 3;
 
 const TAU = Math.PI * 2;
 
-export function shade(c: number, f: number): number {
+function shade(c: number, f: number): number {
   const r = Math.max(0, Math.min(255, Math.round(((c >> 16) & 255) * f)));
   const g = Math.max(0, Math.min(255, Math.round(((c >> 8) & 255) * f)));
   const b = Math.max(0, Math.min(255, Math.round((c & 255) * f)));
@@ -111,14 +111,12 @@ function makeRock(scene: Phaser.Scene, key: string, radius: number, ore: OreId, 
     facing.push(f);
     fill(g, [cen, a, b], shade(base, 0.72 + 0.3 * f + (rng() - 0.5) * 0.08));
   }
-  // inner ridge facets for depth
   for (let i = 0; i < n; i++) {
     if (rng() < 0.45) continue;
     const a = lerpP(cen, pts[i], 0.55);
     const b = lerpP(cen, pts[(i + 1) % n], 0.55);
     fill(g, [cen, a, b], shade(base, 0.8 + 0.28 * facing[i]), 0.55);
   }
-  // ore veins
   const veins = 3 + Math.floor(rng() * 3);
   for (let v = 0; v < veins; v++) {
     const i = Math.floor(rng() * n);
@@ -196,28 +194,23 @@ function makeDebris(scene: Phaser.Scene, key: string, seed: number): void {
 function makeShip(scene: Phaser.Scene): void {
   const g = newG(scene);
   const dark = 0x15181c;
-  // engine block
   fill(g, [[2, 18], [8, 16], [8, 32], [2, 30]], 0x3a3f46);
-  // wings
   fill(g, [[26, 14], [12, 2], [6, 12], [14, 15]], 0xe8832a);
   fill(g, [[26, 34], [12, 46], [6, 36], [14, 33]], 0xb8621a);
   outline(g, [[26, 14], [12, 2], [6, 12], [14, 15]], dark, 1.5);
   outline(g, [[26, 34], [12, 46], [6, 36], [14, 33]], dark, 1.5);
-  // hull, lit half / shadow half
   fill(g, [[45, 24], [32, 13], [11, 11], [4, 17], [4, 24]], 0xe6e9ec);
   fill(g, [[45, 24], [32, 35], [11, 37], [4, 31], [4, 24]], 0xa3a9b1);
   outline(g, [[45, 24], [32, 13], [11, 11], [4, 17], [4, 31], [11, 37], [32, 35]], dark, 2);
   g.lineStyle(1, 0x6b727b, 0.9);
   g.lineBetween(10, 24, 40, 24);
   g.lineBetween(18, 12, 18, 36);
-  // mining cannon
   g.fillStyle(0x4b5058, 1);
   g.fillRect(34, 21, 11, 6);
   g.lineStyle(1.5, dark, 1);
   g.strokeRect(34, 21, 11, 6);
   g.fillStyle(0xe8832a, 1);
   g.fillRect(43, 22, 2, 4);
-  // cockpit
   g.fillStyle(0x23607c, 1);
   g.fillEllipse(26, 24, 12, 8);
   g.fillStyle(0x8fd9f2, 1);
@@ -281,7 +274,6 @@ function makeStation(scene: Phaser.Scene): void {
   const size = 280;
   const c = size / 2;
   const g = newG(scene);
-  // ring body
   g.lineStyle(26, 0x2e353d, 1);
   g.strokeCircle(c, c, 112);
   g.lineStyle(6, 0x4b5560, 1);
@@ -289,7 +281,6 @@ function makeStation(scene: Phaser.Scene): void {
   g.lineStyle(4, 0x14181c, 1);
   g.strokeCircle(c, c, 99);
   g.strokeCircle(c, c, 126);
-  // hazard stripes on the rim
   const segs = 36;
   for (let i = 0; i < segs; i++) {
     g.lineStyle(5, i % 2 ? 0xe8832a : 0x14181c, 1);
@@ -297,7 +288,6 @@ function makeStation(scene: Phaser.Scene): void {
     g.arc(c, c, 118, (i / segs) * TAU, ((i + 0.9) / segs) * TAU);
     g.strokePath();
   }
-  // spokes
   for (let k = 0; k < 4; k++) {
     const a = (k / 4) * TAU + Math.PI / 4;
     g.lineStyle(14, 0x3a424b, 1);
@@ -305,7 +295,6 @@ function makeStation(scene: Phaser.Scene): void {
     g.lineStyle(2, 0x14181c, 1);
     g.lineBetween(c + Math.cos(a) * 40, c + Math.sin(a) * 40, c + Math.cos(a) * 100, c + Math.sin(a) * 100);
   }
-  // hub
   g.fillStyle(0x3b444e, 1);
   g.fillCircle(c, c, 46);
   g.fillStyle(0x56616d, 1);
@@ -321,7 +310,6 @@ function makeStation(scene: Phaser.Scene): void {
   g.strokeCircle(c, c, 26);
   g.fillStyle(0xe8832a, 1);
   g.fillCircle(c, c, 8);
-  // windows along the ring
   for (let i = 0; i < 24; i++) {
     const a = (i / 24) * TAU;
     g.fillStyle(i % 3 === 0 ? 0xffd27a : 0x6c7782, 1);
@@ -462,9 +450,7 @@ function makeDread(scene: Phaser.Scene): void {
   g.lineBetween(30, 110, 296, 110);
   g.lineBetween(100, 34, 100, 186);
   g.lineBetween(180, 40, 180, 180);
-  // red stripe
   fill(g, [[60, 96], [220, 96], [220, 106], [60, 106]], 0xb33a2e);
-  // gun turrets
   for (const [x, y] of [[210, 56], [210, 164], [120, 40], [120, 180]] as P[]) {
     g.fillStyle(0x2f3339, 1);
     g.fillCircle(x, y, 14);
@@ -475,12 +461,10 @@ function makeDread(scene: Phaser.Scene): void {
     g.fillStyle(0xe5483a, 1);
     g.fillCircle(x, y, 4);
   }
-  // bridge
   g.fillStyle(0x23607c, 1);
   g.fillEllipse(262, 110, 30, 16);
   g.fillStyle(0xe5483a, 1);
   g.fillEllipse(262, 110, 12, 6);
-  // engines
   for (const y of [70, 110, 150]) {
     g.fillStyle(0x23272c, 1);
     g.fillRect(0, y - 9, 14, 18);
@@ -523,7 +507,6 @@ function makeSmall(scene: Phaser.Scene): void {
   bake(m, 'smoke', 12, 12);
 
   for (const id of ORE_IDS) {
-    // dropped ore uses the same hand-made sprite as the hotbar, drawn 2x with no smoothing
     const g = newG(scene);
     const pal = orePalette(id);
     const rows = ORE_SPRITE[id];

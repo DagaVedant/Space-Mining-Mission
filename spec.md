@@ -34,7 +34,7 @@ Versioned localStorage autosave on dock supports offline AI play and migrates ex
 The Node.js service uses SQLite for accounts, sessions, cloud saves and PvP records. Passwords are stored as scrypt hashes; bearer sessions are hashed at rest. WebSocket PvP matchmaking pairs two signed-in players in a server-authoritative dogfight. Casual matches do not affect rating; ranked matches update seasonal and career ratings and appear on the leaderboard. Players can cancel queueing, retry after a timeout, or rematch. The backend is separate from the static GitHub Pages frontend and must be configured/deployed independently.
 
 ## Art and audio
-Fully procedural: asteroids drawn in code as flat-faceted polygons lit from upper-left with ore veins, vector ship / pirates / drones / station, particle effects, parallax starfield. WebAudio synthesized sound effects. Gritty industrial palette: near-black space, warm ore glows, bright readable shapes. No external assets, no gradients in rendering.
+Hybrid art pipeline: asteroids, pirates, drones, stations, hazards, particles and the parallax starfield are drawn procedurally; four original crisp-edged SVG player-ship skins provide distinct silhouettes and palettes. WebAudio synthesized sound effects. Gritty industrial palette: near-black space, warm ore glows, bright readable shapes. No third-party art assets.
 
 ## Non-goals
 Monetization and social/clan systems. The old Java backend and Vulture assets are removed.

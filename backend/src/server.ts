@@ -337,7 +337,7 @@ function isSavePayload(value: unknown): value is SavePayload {
   );
 }
 
-app.get('/api/save', requireUser, (req, res) => {
+app.get('/api/save', requireUser, (_req, res) => {
   const user = res.locals.user as User;
   const row = db.prepare('SELECT payload, revision, updated_at FROM saves WHERE user_id = ?').get(user.id) as
     | SaveRow

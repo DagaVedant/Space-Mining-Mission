@@ -31,7 +31,7 @@ npm test
 npm run build
 ```
 
-Stack: Phaser 3, TypeScript, Vite, Vitest. All art is drawn procedurally and all sound is synthesized, so there are no external assets. Pushing to `main` deploys to GitHub Pages.
+Stack: Phaser 3, TypeScript, Vite, Vitest. Asteroids, hazards, effects and environments are drawn procedurally; the four original player-ship skins are crisp-edged SVG assets. All sound is synthesized. Pushing to `main` deploys to GitHub Pages.
 
 ## Backend
 

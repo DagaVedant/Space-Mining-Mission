@@ -303,8 +303,6 @@ export const hud = {
   },
 };
 
-// ---------- overlays (menu, pause, death, victory) ----------
-
 export interface OverlayButton {
   label: string;
   primary?: boolean;
@@ -606,8 +604,6 @@ function setAccountStatus(rootElement: HTMLElement, error: unknown): void {
   const status = rootElement.querySelector<HTMLElement>('.account-status');
   if (status) status.textContent = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Account request failed.';
 }
-
-// ---------- shop ----------
 
 function pips(level: number, max: number): string {
   let s = '';

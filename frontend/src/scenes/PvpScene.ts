@@ -1,7 +1,6 @@
 import Phaser from 'phaser';
 import { buildTextures } from '../art';
 import { accountToken, websocketUrl } from '../cloud';
-import { SHIP_SKINS } from '../data';
 import { loadSettings, type GameSettings } from '../settings';
 import { session } from '../session';
 import { mountTouchControls, type TouchControls } from '../touch';
@@ -249,10 +248,12 @@ export class PvpScene extends Phaser.Scene {
     for (const player of players) {
       let view = this.ships.get(player.id);
       if (!view) {
-        const tint = player.id === this.localId
-          ? SHIP_SKINS.find((skin) => skin.id === session.save.selectedSkin)?.tint ?? 0xffffff
-          : 0xff6b58;
-        const sprite = this.add.image(player.x, player.y, 'ship').setTint(tint).setDepth(5).setScale(1.15);
+        const isLocal = player.id === this.localId;
+        const sprite = this.add
+          .image(player.x, player.y, isLocal ? `ship_${session.save.selectedSkin}` : 'ship_ember')
+          .setTint(isLocal ? 0xffffff : 0xff6b58)
+          .setDepth(5)
+          .setScale(1.15);
         const label = this.add
           .text(player.x, player.y - 42, player.name, {
             fontFamily: 'Bahnschrift, "Segoe UI", system-ui, sans-serif',
