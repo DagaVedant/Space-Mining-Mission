@@ -143,14 +143,32 @@ async function putSave(state: AuthState, save: SaveData): Promise<void> {
   persist(save, false, false);
 }
 
-export async function restoreCloudSave(localSave: SaveData | null): Promise<SaveData> {
+// one cloud operation at a time: two overlapping uploads send the same revision, and the
+// loser's conflict handling would then put the older save back over the newer one
+let cloudQueue: Promise<unknown> = Promise.resolve();
+
+function queued<T>(task: () => Promise<T>): Promise<T> {
+  const result = cloudQueue.then(task);
+  cloudQueue = result.catch(() => undefined);
+  return result;
+}
+
+export function restoreCloudSave(localSave: SaveData | null): Promise<SaveData> {
+  return queued(() => restore(localSave));
+}
+
+export function syncCloudSave(save: SaveData): Promise<void> {
+  return queued(() => sync(save));
+}
+
+async function restore(localSave: SaveData | null): Promise<SaveData> {
   const state = authState();
   if (!state) return localSave ?? newSave();
   const owner = cloudOwner();
-  const ownerMatches = !owner || owner === state.user.id;
   const remote = await readCloudSave(state);
   if (!remote) {
-    const initial = ownerMatches && localSave ? localSave : newSave();
+    // a new account keeps what was played as a guest, but never another account's save
+    const initial = (!owner || owner === state.user.id) && localSave ? localSave : newSave();
     await putSave(state, initial);
     storeCloudOwner(state.user.id);
     return initial;
@@ -159,7 +177,8 @@ export async function restoreCloudSave(localSave: SaveData | null): Promise<Save
   storeAuth(state);
   const cloudSave = normalizeSave(remote.save);
   if (!cloudSave) throw new Error('The cloud save is invalid and could not be loaded.');
-  if (ownerMatches && localSave && localSave.updatedAt > remote.updatedAt) {
+  // only a copy that has synced with this account may replace its cloud save
+  if (owner === state.user.id && localSave && localSave.updatedAt > remote.updatedAt) {
     await putSave(state, localSave);
     storeCloudOwner(state.user.id);
     return localSave;
@@ -170,9 +189,21 @@ export async function restoreCloudSave(localSave: SaveData | null): Promise<Save
   return cloudSave;
 }
 
-export async function syncCloudSave(save: SaveData): Promise<void> {
+function adopt(save: SaveData, replacement: SaveData): void {
+  Object.assign(save, replacement);
+  persist(save, false, false);
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('rockbreaker-cloud-save-updated'));
+}
+
+async function sync(save: SaveData): Promise<void> {
   const state = authState();
   if (!state) return;
+  // the restore at sign-in has not succeeded yet, so this copy must not overwrite anything
+  if (cloudOwner() !== state.user.id) {
+    const restored = await restore(save);
+    if (restored !== save) adopt(save, restored);
+    return;
+  }
   try {
     await putSave(state, save);
   } catch (error) {
@@ -183,9 +214,7 @@ export async function syncCloudSave(save: SaveData): Promise<void> {
     const remoteSave = normalizeSave(remote.save);
     if (!remoteSave) throw new Error('The updated cloud save is invalid.', { cause: error });
     if (remote.updatedAt > save.updatedAt) {
-      Object.assign(save, remoteSave, { updatedAt: remote.updatedAt });
-      persist(save, false, false);
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('rockbreaker-cloud-save-updated'));
+      adopt(save, { ...remoteSave, updatedAt: remote.updatedAt });
       storeAuth(state);
       return;
     }

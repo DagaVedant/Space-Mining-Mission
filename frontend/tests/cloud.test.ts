@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { authenticate, restoreCloudSave } from '../src/cloud';
+import { authenticate, restoreCloudSave, syncCloudSave } from '../src/cloud';
 import { newSave } from '../src/progress';
 
 function jsonResponse(status: number, payload: unknown): Response {
@@ -69,5 +69,67 @@ describe('cloud saves', () => {
     expect(result.updatedAt).toBe(300);
     expect(calls).toEqual(['GET /api/save']);
     expect(localStore.get('rockbreaker-cloud-owner-v1')).toBe('account-two');
+  });
+
+  // the server's revision rule, with enough delay for two requests to overlap
+  function fakeServer(initial?: { money: number; revision: number; updatedAt: number }) {
+    const row = initial
+      ? { save: { ...newSave(), money: initial.money }, revision: initial.revision, updatedAt: initial.updatedAt }
+      : { save: null as ReturnType<typeof newSave> | null, revision: 0, updatedAt: 0 };
+    vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init: RequestInit = {}) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (init.method === 'PUT') {
+        const body = JSON.parse(String(init.body));
+        if (body.revision !== row.revision) return jsonResponse(409, { error: 'Cloud save changed on another device.' });
+        row.save = body.save;
+        row.revision++;
+        row.updatedAt = Date.now() + 1;
+        return jsonResponse(200, { revision: row.revision, updatedAt: row.updatedAt });
+      }
+      if (!row.save) return jsonResponse(404, { error: 'No cloud save exists for this account.' });
+      return jsonResponse(200, row);
+    });
+    return row;
+  }
+
+  const signedIn = () => localStore.set('rockbreaker-account-v1', JSON.stringify({
+    token: 'test-token',
+    user: { id: 'pilot-1', username: 'pilot_one' },
+    revision: 0,
+  }));
+
+  it('keeps the cloud save when a device that never synced signs in with newer guest progress', async () => {
+    const row = fakeServer({ money: 999, revision: 7, updatedAt: 200 });
+    signedIn();
+    const guest = { ...newSave(), money: 5, updatedAt: 900 };
+
+    await expect(restoreCloudSave(guest)).resolves.toMatchObject({ money: 999 });
+    expect(row.save?.money).toBe(999);
+    expect(row.revision).toBe(7);
+  });
+
+  it('does not push guest progress over the cloud save when the sign-in restore never ran', async () => {
+    const row = fakeServer({ money: 999, revision: 7, updatedAt: 200 });
+    signedIn();
+    const guest = { ...newSave(), money: 5, updatedAt: Date.now() };
+
+    await syncCloudSave(guest);
+    expect(row.save?.money).toBe(999);
+    expect(guest.money).toBe(999);
+  });
+
+  it('keeps the newest of two saves made in quick succession', async () => {
+    const row = fakeServer();
+    signedIn();
+    localStore.set('rockbreaker-cloud-owner-v1', 'pilot-1');
+    const save = { ...newSave(), money: 200, updatedAt: Date.now() };
+
+    const first = syncCloudSave(save);
+    save.money = 300;
+    save.updatedAt = Date.now();
+    await Promise.all([first, syncCloudSave(save)]);
+
+    expect(save.money).toBe(300);
+    expect(row.save?.money).toBe(300);
   });
 });

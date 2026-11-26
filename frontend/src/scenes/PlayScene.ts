@@ -396,6 +396,8 @@ export class PlayScene extends Phaser.Scene {
     window.addEventListener('rockbreaker-cloud-save-error', this.cloudErrorHandler);
     window.addEventListener('rockbreaker-cloud-save-updated', this.cloudUpdateHandler);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      // captures are global and outlive the scene, which would stop these keys typing in the menu
+      kb.clearCaptures();
       window.removeEventListener('keydown', this.keyHandler);
       window.removeEventListener('blur', this.blurHandler);
       window.removeEventListener('asteroid-breaker-settings-changed', this.settingsUpdateHandler);

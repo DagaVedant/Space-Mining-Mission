@@ -367,6 +367,8 @@ export class PvpScene extends Phaser.Scene {
 
   private shutdown(): void {
     this.keys?.[this.settings?.bindings.pause]?.off('down', this.leave, this);
+    // captures are global and outlive the scene, which would stop these keys typing in the menu
+    this.input.keyboard?.clearCaptures();
     this.queueTimeout?.remove(false);
     this.queueTimeout = null;
     this.pingTimer?.remove(false);
