@@ -247,11 +247,12 @@ button.x {
 }
 #ticker {
   flex: 1;
+  min-width: 0;
   display: flex;
   align-items: stretch;
 }
 .tk {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 0.3em;
@@ -272,7 +273,12 @@ button.x {
 .sw {
   margin-right: 0.5em;
 }
+/* the name gives way first, so a price or change is never cut off */
 .tk span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--ink);
 }
 .tk .oi {
@@ -318,9 +324,11 @@ td em.down {
 .tk.ev span {
   color: var(--gold);
 }
+/* hangs under the strip: inside it, there is no room beside the four prices */
 .evt {
-  align-self: center;
-  margin: 0 0.6em;
+  position: absolute;
+  top: calc(100% + var(--u) * 4);
+  right: 0;
   padding: 0.1em 0.7em;
   background: var(--gold);
   color: #2a1c00;

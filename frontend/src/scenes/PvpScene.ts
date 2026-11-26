@@ -69,9 +69,19 @@ export class PvpScene extends Phaser.Scene {
     super('PvP');
   }
 
-  /** No camera bounds: a window bigger than the arena should still show it in the middle. */
+  /**
+   * Centres the arena on an axis where the window can hold it, and otherwise follows the local ship
+   * up to the walls. Camera bounds would pin a window bigger than the arena to its top left.
+   */
   private centreArena(): void {
-    this.cameras.main.centerOn(this.world.width / 2, this.world.height / 2);
+    const ship = this.ships.get(this.localId)?.sprite;
+    const axis = (view: number, world: number, at: number): number =>
+      view >= world ? world / 2 : Phaser.Math.Clamp(at, view / 2, world - view / 2);
+    const { width, height } = this.world;
+    this.cameras.main.centerOn(
+      axis(this.scale.width, width, ship?.x ?? width / 2),
+      axis(this.scale.height, height, ship?.y ?? height / 2),
+    );
   }
 
   create(): void {
@@ -280,6 +290,7 @@ export class PvpScene extends Phaser.Scene {
       view.bar.setPosition(player.x, player.y - 28).setScale(Math.max(0, player.hp / 100), 1);
       view.bar.setFillStyle(player.hp > 35 ? 0x55b13a : 0xc24848);
     }
+    this.centreArena();
     this.shots.clear();
     this.shots.fillStyle(0xffd074, 1);
     for (const projectile of projectiles) fillDisc(this.shots, projectile.x, projectile.y, 4);
