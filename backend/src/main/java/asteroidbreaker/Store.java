@@ -3,6 +3,7 @@ package asteroidbreaker;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.stream.Stream;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -187,7 +188,10 @@ class Store {
             (rs, i) -> new Rating(rs.getInt(1), rs.getString(2), rs.getInt(3)),
             userId);
         if (row.seasonKey().equals(season)) return row;
-        jdbc.update("UPDATE pvp_ratings SET season_key = ?, season_rating = 1000, updated_at = ? WHERE user_id = ?", season, now, userId);
+        // the season is checked again so a match recorded since the read above is not reset
+        jdbc.update(
+            "UPDATE pvp_ratings SET season_key = ?, season_rating = 1000, updated_at = ? WHERE user_id = ? AND season_key <> ?",
+            season, now, userId, season);
         return new Rating(row.rating(), season, 1000);
     }
 
@@ -207,7 +211,14 @@ class Store {
     int recordMatch(String matchId, boolean ranked, String winnerId, String loserId, long durationSeconds) {
         Integer change = tx.execute(status -> {
             int ratingChange = 0;
+            // always in the same order, so two matches between the same players cannot deadlock
+            List<String> ids = Stream.of(winnerId, loserId).sorted().toList();
             if (ranked) {
+                // both rows are locked before either is read, so matches ending together are counted one by one
+                for (String id : ids) {
+                    rating(id);
+                    jdbc.queryForList("SELECT user_id FROM pvp_ratings WHERE user_id = ? FOR UPDATE", id);
+                }
                 Rating winner = rating(winnerId);
                 Rating loser = rating(loserId);
                 double expected = 1 / (1 + Math.pow(10, (loser.seasonRating() - winner.seasonRating()) / 400.0));
@@ -227,8 +238,10 @@ class Store {
                 INSERT INTO matches (id, winner_id, loser_id, duration_seconds, created_at, ranked, winner_rating_delta, loser_rating_delta)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 matchId, winnerId, loserId, durationSeconds, System.currentTimeMillis(), ranked ? 1 : 0, ratingChange, -ratingChange);
-            jdbc.update("UPDATE player_stats SET wins = wins + 1 WHERE user_id = ?", winnerId);
-            jdbc.update("UPDATE player_stats SET losses = losses + 1 WHERE user_id = ?", loserId);
+            for (String id : ids) {
+                String column = id.equals(winnerId) ? "wins" : "losses";
+                jdbc.update("UPDATE player_stats SET " + column + " = " + column + " + 1 WHERE user_id = ?", id);
+            }
             return ratingChange;
         });
         return change == null ? 0 : change;

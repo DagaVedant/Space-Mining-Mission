@@ -15,17 +15,23 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
@@ -37,6 +43,9 @@ class ServerTest {
 
     @LocalServerPort
     int port;
+
+    @Autowired
+    Store store;
 
     record Reply(int status, String text, HttpHeaders headers) {
         JsonNode json() throws Exception {
@@ -76,6 +85,7 @@ class ServerTest {
         private final BlockingQueue<JsonNode> inbox = new LinkedBlockingQueue<>();
         private final StringBuilder partial = new StringBuilder();
         private volatile WebSocket ws;
+        final CompletableFuture<Integer> closeCode = new CompletableFuture<>();
 
         static Socket connect(int port) throws Exception {
             Socket socket = new Socket();
@@ -101,6 +111,12 @@ class ServerTest {
                 partial.setLength(0);
             }
             webSocket.request(1);
+            return null;
+        }
+
+        @Override
+        public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+            closeCode.complete(statusCode);
             return null;
         }
 
@@ -243,6 +259,60 @@ class ServerTest {
 
         assertEquals(2, call("GET", "/api/pvp/stats", first.token(), null).json().get("wins").asInt());
         assertEquals(1, call("GET", "/api/pvp/stats", disconnectedPilot.token(), null).json().get("losses").asInt());
+    }
+
+    @Test
+    void matchesEndingTogetherAreAllCounted() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 7);
+        Account winner = register("both_" + suffix);
+        Account second = register("two_" + suffix);
+        Account third = register("three_" + suffix);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            int expected = 1000;
+            for (int round = 0; round < 10; round++) {
+                CyclicBarrier together = new CyclicBarrier(2);
+                List<Future<Integer>> gains = new ArrayList<>();
+                for (Account loser : List.of(second, third)) {
+                    gains.add(pool.submit(() -> {
+                        together.await();
+                        return store.recordMatch(Crypto.randomHex(12), true, winner.id(), loser.id(), 1);
+                    }));
+                }
+                for (Future<Integer> gain : gains) expected += gain.get(10, TimeUnit.SECONDS);
+                assertEquals(expected, store.rating(winner.id()).seasonRating());
+
+                // two players beating each other at once must not deadlock
+                for (boolean ranked : new boolean[] {true, false}) {
+                    CyclicBarrier opposed = new CyclicBarrier(2);
+                    List<Future<Integer>> both = new ArrayList<>();
+                    for (List<Account> pair : List.of(List.of(second, third), List.of(third, second))) {
+                        both.add(pool.submit(() -> {
+                            opposed.await();
+                            return store.recordMatch(Crypto.randomHex(12), ranked, pair.get(0).id(), pair.get(1).id(), 1);
+                        }));
+                    }
+                    for (Future<Integer> result : both) result.get(10, TimeUnit.SECONDS);
+                }
+            }
+            assertEquals(20, store.stats(winner.id()).wins());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void aSocketThatFloodsIsClosed() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 7);
+        Account account = register("flood_" + suffix);
+        Socket socket = Socket.connect(port);
+        socket.authenticate(account.token());
+        try {
+            for (int i = 0; i < 1000; i++) socket.send(Map.of("type", "ping", "sentAt", i));
+        } catch (Exception ignored) {
+            // closed part way through
+        }
+        assertEquals(1008, socket.closeCode.get(5, TimeUnit.SECONDS));
     }
 
     private Reply putSave(Account account, Object save, int revision) throws Exception {

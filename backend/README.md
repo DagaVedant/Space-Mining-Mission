@@ -53,6 +53,7 @@ The connection pool holds 5 connections. Credentials are never logged.
   its result is written, so it is finished only once.
 - Writing to a socket can block, so it happens off the game thread, in order for each socket. A client that falls
   behind misses snapshots; one that stops reading is dropped when Tomcat's send times out (about 20 seconds).
+- A socket that sends more than 60 messages a second (after a burst of 200), or has 256 waiting, is closed with 1008.
 
 ## Differences from the Node backend
 

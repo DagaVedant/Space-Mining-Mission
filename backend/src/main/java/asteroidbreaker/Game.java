@@ -56,6 +56,13 @@ class Game extends AbstractWebSocketHandler implements WebSocketConfigurer {
     /** Unsent messages at which a client misses snapshots, and at which other messages are dropped too. */
     private static final int SNAPSHOT_BACKLOG = 3;
     private static final int MAX_BACKLOG = 256;
+    /**
+     * Inbound limits per socket; past either one it is closed. The client sends about 21 messages a second, and
+     * the burst covers what a stalled connection delivers at once.
+     */
+    private static final double MESSAGES_PER_SECOND = 60;
+    private static final int MESSAGE_BURST = 200;
+    private static final int MAX_PENDING = 256;
 
     record Input(double ax, double ay, double aim, boolean fire, boolean boost) {}
 
@@ -67,6 +74,12 @@ class Game extends AbstractWebSocketHandler implements WebSocketConfigurer {
         /** Sends and the close, in order; guarded by this. */
         CompletableFuture<Void> outbox = DONE;
         final AtomicInteger unsent = new AtomicInteger();
+        /** Received messages still waiting their turn. */
+        final AtomicInteger pending = new AtomicInteger();
+        /** Rate limit state; guarded by this. */
+        double allowance = MESSAGE_BURST;
+        long refilledAt = System.nanoTime();
+        boolean flooded;
         // game thread only
         User user;
         boolean queued;
@@ -229,7 +242,29 @@ class Game extends AbstractWebSocketHandler implements WebSocketConfigurer {
 
     private void receive(WebSocketSession session, String raw) {
         Client client = (Client) session.getAttributes().get(CLIENT);
-        if (client != null) enqueue(client, () -> handleMessage(client, raw));
+        if (client == null || !admit(client)) return;
+        client.pending.incrementAndGet();
+        enqueue(client, () -> {
+            client.pending.decrementAndGet();
+            return handleMessage(client, raw);
+        });
+    }
+
+    /** False once the socket has sent too much; the message is then dropped instead of held in memory. */
+    private boolean admit(Client c) {
+        synchronized (c) {
+            if (c.flooded) return false;
+            long now = System.nanoTime();
+            c.allowance = Math.min(MESSAGE_BURST, c.allowance + (now - c.refilledAt) / 1e9 * MESSAGES_PER_SECOND);
+            c.refilledAt = now;
+            if (c.allowance >= 1 && c.pending.get() < MAX_PENDING) {
+                c.allowance--;
+                return true;
+            }
+            c.flooded = true;
+        }
+        close(c, 1008, "too-many-messages");
+        return false;
     }
 
     /** Runs the task on the game thread after this socket's earlier tasks have finished, failed or not. */
