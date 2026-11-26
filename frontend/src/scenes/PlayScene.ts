@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { fillDisc, strokeArc, strokeRing } from '../draw';
+import { strokeArc, strokeRing } from '../draw';
 import { sfx } from '../audio';
 import { AST_R, VARIANTS, type Sz } from '../art';
 import {
@@ -13,6 +13,7 @@ import {
   type UpgradeId,
   type DiscoverySite,
 } from '../data';
+import { HOLE_FRAMES, HOLE_SCALE, holeKey } from '../blackhole';
 import { createMarket, priceOf, stepMarket, type MarketState } from '../market';
 import {
   buyUpgrade,
@@ -169,7 +170,6 @@ interface Boss extends Spr {
   spawnCd: number;
 }
 
-const ROCK_MAP_COLOR = { volatile: '#ff8a24', crystal: '#8ff0e4', dense: '#d7dee6', comet: '#ffffff' };
 const PULSE_RADIUS = 320;
 const PULSE_COOLDOWN = 12;
 
@@ -219,7 +219,7 @@ export class PlayScene extends Phaser.Scene {
   private gateGlow!: Phaser.GameObjects.Image;
   private gx = 0;
   private gy = 0;
-  private wells: { x: number; y: number }[] = [];
+  private wells: { x: number; y: number; img: Phaser.GameObjects.Image }[] = [];
   private planets: Planet[] = [];
   private discoverySites: RuntimeDiscoverySite[] = [];
   private discoveryViews = new Map<string, DiscoveryView>();
@@ -239,8 +239,6 @@ export class PlayScene extends Phaser.Scene {
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private settings!: GameSettings;
   private touch!: TouchControls;
-  private mm!: CanvasRenderingContext2D;
-  private mmTick = 0;
 
   private clock = 0;
   private t = 0;
@@ -412,7 +410,6 @@ export class PlayScene extends Phaser.Scene {
     });
 
     hud.show();
-    this.mm = hud.minimap();
     document.getElementById('discovery-log')?.addEventListener('click', this.discoveryLogHandler);
     if (this.settings.showTutorial && !run) this.showFlightSchool();
     hud.toast(this.voyage.info().name, 'info');
@@ -493,11 +490,16 @@ export class PlayScene extends Phaser.Scene {
   private buildBackground(): void {
     this.stars = ['stars1', 'stars2', 'stars3'].map((k, i) =>
       this.add
-        .tileSprite(0, 0, 1280, 720, k)
+        .tileSprite(0, 0, this.scale.width, this.scale.height, k)
         .setOrigin(0)
         .setScrollFactor(0)
         .setDepth(-20 + i),
     );
+    const fit = (): void => {
+      for (const star of this.stars) star.setSize(this.scale.width, this.scale.height);
+    };
+    this.scale.on('resize', fit);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scale.off('resize', fit));
     const g = this.add.graphics().setDepth(-10);
     g.lineStyle(1, 0x1b222a, 0.55);
     for (let x = 0; x <= this.S; x += 400) g.lineBetween(x, 0, x, this.S);
@@ -645,7 +647,8 @@ export class PlayScene extends Phaser.Scene {
         if (Phaser.Math.Distance.Between(x, y, this.gx, this.gy) < 700) continue;
         if (this.nearDiscovery(x, y, 650)) continue;
         if (this.wells.some((w) => Phaser.Math.Distance.Between(x, y, w.x, w.y) < 1100)) continue;
-        this.wells.push({ x, y });
+        const img = this.add.image(x, y, holeKey(0)).setScale(HOLE_SCALE).setDepth(-4.5);
+        this.wells.push({ x, y, img });
         break;
       }
     }
@@ -1439,8 +1442,6 @@ export class PlayScene extends Phaser.Scene {
       return;
     } else if (key === this.settings.bindings.pulse) {
       this.pulse();
-    } else if (key === this.settings.bindings.map) {
-      hud.cycleMap();
     } else if (key === this.settings.bindings.interact) {
       this.interact();
     } else if (key === this.settings.bindings.pause) {
@@ -1755,8 +1756,6 @@ export class PlayScene extends Phaser.Scene {
     this.updateStation(dt);
     this.updateHint();
     this.updateHud();
-    this.mmTick = (this.mmTick + 1) % 2;
-    if (this.mmTick === 0) this.drawMinimap();
   }
 
   private updateMarket(dt: number): void {
@@ -2451,7 +2450,7 @@ export class PlayScene extends Phaser.Scene {
     for (const w of this.wells) {
       // visuals, skipped for wells nowhere near the screen (their pull below still applies)
       if (w.x > view.x - reach && w.x < view.right + reach && w.y > view.y - reach && w.y < view.bottom + reach) {
-        this.drawWell(w.x, w.y);
+        this.drawWell(w);
       }
       // physics
       const pull = (obj: Spr, k: number): void => {
@@ -2476,19 +2475,21 @@ export class PlayScene extends Phaser.Scene {
     this.updatePlanets(dt);
   }
 
-  private drawWell(x: number, y: number): void {
+  /** The disk animation, plus streaks of dust falling in that show how far the pull reaches. */
+  private drawWell(w: { x: number; y: number; img: Phaser.GameObjects.Image }): void {
+    const still = this.settings.reducedMotion;
+    const clock = still ? 0 : this.t;
+    w.img.setTexture(holeKey(Math.floor(clock * 12) % HOLE_FRAMES));
     const g = this.wellGfx;
-    for (let i = 0; i < 4; i++) {
-      const r = WELL_R * (0.25 + i * 0.25);
-      g.lineStyle(2, 0xb35cf0, 0.12 + i * 0.03);
-      for (let s = 0; s < 8; s++) {
-        strokeArc(g, x, y, r, this.t * (0.6 - i * 0.12) + (s / 8) * Math.PI * 2, 0.45);
-      }
+    for (let i = 0; i < 18; i++) {
+      const fall = (clock * 0.16 + i * 0.618) % 1;
+      const r = WELL_R - (WELL_R - 150) * fall * fall;
+      // fades in at the rim and out again before it reaches the disk
+      g.lineStyle(3, fall > 0.6 ? 0xff9622 : 0xa02c4c, 0.5 * Math.sin(fall * Math.PI));
+      strokeArc(g, w.x, w.y, r, i * 2.4 + fall * 3, 0.16 + fall * 0.4);
     }
-    g.fillStyle(0x050407, 1);
-    fillDisc(g, x, y, 34);
-    g.lineStyle(3, 0xb35cf0, 0.9);
-    strokeRing(g, x, y, 34);
+    g.lineStyle(2, 0xa02c4c, 0.18);
+    strokeRing(g, w.x, w.y, WELL_R);
   }
 
   private wellCd = 0;
@@ -2592,8 +2593,7 @@ export class PlayScene extends Phaser.Scene {
       cargo: this.cargo,
       cargoMax: this.stats.cargoMax,
       money: this.save.money,
-      bossName: info.bossName,
-      hasGate: info.hasGate,
+      place: info.name,
       earned: info.earned,
       goal: info.goal,
       contracts: this.active,
@@ -2605,62 +2605,5 @@ export class PlayScene extends Phaser.Scene {
       discoveryTotal: DISCOVERY_SITES.length,
       pulse: { key: this.settings.bindings.pulse, wait: this.pulseCd },
     });
-  }
-
-  private drawMinimap(): void {
-    const c = this.mm;
-    const W = 180;
-    const k = W / this.S;
-    c.clearRect(0, 0, W, W);
-    c.fillStyle = 'rgba(10,12,15,0.9)';
-    c.fillRect(0, 0, W, W);
-    c.strokeStyle = '#3a2a26';
-    c.strokeRect(0.5, 0.5, W - 1, W - 1);
-    for (const w of this.wells) {
-      c.strokeStyle = '#b35cf0';
-      c.beginPath();
-      c.arc(w.x * k, w.y * k, WELL_R * k * 0.6, 0, Math.PI * 2);
-      c.stroke();
-    }
-    for (const planet of this.planets) {
-      c.fillStyle = '#86a9c9';
-      c.beginPath();
-      c.arc(planet.x * k, planet.y * k, Math.max(2, planet.radius * k), 0, Math.PI * 2);
-      c.fill();
-    }
-    for (const site of this.discoverySites) {
-      const found = this.save.discoveries.includes(site.id);
-      c.fillStyle = found ? '#8bc97c' : site.kind === 'wreck' ? '#9ca9ad' : site.kind === 'cache' ? '#e7a849' : '#64d4d7';
-      c.beginPath();
-      c.arc(site.worldX * k, site.worldY * k, found ? 3 : 4, 0, Math.PI * 2);
-      c.fill();
-    }
-    for (const r of this.rocks.getChildren() as Rock[]) {
-      c.fillStyle = r.kind === 'plain' ? '#6a625a' : ROCK_MAP_COLOR[r.kind];
-      const s = r.kind !== 'plain' ? 3.5 : r.sz === 'L' ? 3 : r.sz === 'M' ? 2 : 1.2;
-      c.fillRect(r.x * k - s / 2, r.y * k - s / 2, s, s);
-    }
-    c.fillStyle = '#e8832a';
-    c.fillRect(this.cx * k - 4, this.cy * k - 4, 8, 8);
-    if (this.voyage.hasGate) {
-      c.strokeStyle = this.gateOpen() ? '#e8832a' : '#59616b';
-      c.beginPath();
-      c.arc(this.gx * k, this.gy * k, 4, 0, Math.PI * 2);
-      c.stroke();
-    }
-    c.fillStyle = '#e5483a';
-    for (const p of this.pirates.getChildren() as Pirate[]) c.fillRect(p.x * k - 2, p.y * k - 2, 4, 4);
-    if (this.boss) c.fillRect(this.boss.x * k - 5, this.boss.y * k - 5, 10, 10);
-    c.fillStyle = '#6fd0ff';
-    for (const d of this.drones.getChildren() as Drone[]) c.fillRect(d.x * k - 1.5, d.y * k - 1.5, 3, 3);
-    const cam = this.cameras.main;
-    c.strokeStyle = 'rgba(217,221,226,0.35)';
-    c.strokeRect(cam.scrollX * k, cam.scrollY * k, cam.width * k, cam.height * k);
-    if (!this.dead) {
-      c.fillStyle = '#ffffff';
-      c.beginPath();
-      c.arc(this.player.x * k, this.player.y * k, 2.6, 0, Math.PI * 2);
-      c.fill();
-    }
   }
 }

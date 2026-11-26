@@ -1,4 +1,4 @@
-export type ControlAction = 'up' | 'down' | 'left' | 'right' | 'fire' | 'boost' | 'interact' | 'pause' | 'mute' | 'map' | 'pulse';
+export type ControlAction = 'up' | 'down' | 'left' | 'right' | 'fire' | 'boost' | 'interact' | 'pause' | 'mute' | 'pulse';
 
 export interface GameSettings {
   aimSensitivity: number;
@@ -28,7 +28,6 @@ const DEFAULTS: GameSettings = {
     interact: 'E',
     pause: 'ESC',
     mute: 'M',
-    map: 'N',
     pulse: 'Q',
   },
 };

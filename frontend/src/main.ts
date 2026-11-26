@@ -10,7 +10,8 @@ new Phaser.Game({
   width: 1280,
   height: 720,
   backgroundColor: '#07090c',
-  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  // fills the whole window: at least 1280x720 of view, with the longer side showing more
+  scale: { mode: Phaser.Scale.EXPAND },
   physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 } } },
   scene: [MenuScene, PlayScene, PvpScene],
   // powerPreference asks laptops with two GPUs for the faster one

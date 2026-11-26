@@ -44,11 +44,10 @@ body {
 
 #stage {
   position: relative;
-  width: min(100vw, calc(100vh * 16 / 9));
-  height: min(100vh, calc(100vw * 9 / 16));
-  margin: 0 auto;
-  top: 50%;
-  transform: translateY(-50%);
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
   container-type: size;
   background: var(--bg);
 }
@@ -62,7 +61,7 @@ body {
 
 #ui {
   --hud-scale: 1;
-  --u: calc(100cqw / 1280 * var(--hud-scale));
+  --u: calc(min(100cqw / 1280, 100cqh / 720) * var(--hud-scale));
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -87,6 +86,7 @@ body {
 /* white text with the hard drop shadow Minecraft uses */
 #bar,
 #contracts,
+#pricebar,
 .toast,
 #banner,
 #hint,
@@ -200,40 +200,67 @@ button.x {
   position: absolute;
   inset: 0;
 }
-/* readouts let clicks through to the game, so you can aim and fire across them */
 .plate {
   background: var(--dark);
   border: 2px solid #000;
 }
-/* two side columns, so panels stack instead of landing on each other */
-#left,
-#right {
+/* messages stack under the money panel, however tall it gets */
+#topleft {
   position: absolute;
+  left: calc(var(--u) * 10);
   top: calc(var(--u) * 10);
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  justify-items: start;
   gap: calc(var(--u) * 6);
 }
-#left {
-  left: calc(var(--u) * 10);
-  width: calc(var(--u) * 296);
-  align-items: stretch;
-}
-#right {
-  right: calc(var(--u) * 10);
-  bottom: calc(var(--u) * 10);
-  align-items: flex-end;
-}
 #bar {
-  padding: 0.25em 0.6em 0.35em;
+  width: calc(var(--u) * 330);
+  padding: 0.35em 0.7em 0.45em;
   display: grid;
   gap: 0.05em;
-  font-size: 0.85em;
 }
 .cash #money {
   color: var(--gold);
   font-size: 1.9em;
   line-height: 1;
+}
+#sector-name {
+  color: var(--ink);
+}
+
+/* price strip beside the stats plate */
+#pricebar {
+  position: absolute;
+  left: calc(var(--u) * 350);
+  right: calc(var(--u) * 10);
+  top: calc(var(--u) * 10);
+  height: calc(var(--u) * 84);
+  display: flex;
+  align-items: stretch;
+}
+#pricebar .pl {
+  display: grid;
+  place-items: center;
+  padding: 0 0.5em;
+  border-right: 2px solid #000;
+  color: var(--ink-dim);
+}
+#ticker {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+}
+.tk {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.2em 0.4em;
+  min-width: 0;
+  border-right: 2px solid #000;
+}
+.tk:last-child {
+  border-right: 0;
 }
 .oi {
   width: 1.5em;
@@ -245,9 +272,29 @@ button.x {
 .sw {
   margin-right: 0.5em;
 }
+.tk span {
+  color: var(--ink);
+}
+.tk .oi {
+  width: 1.25em;
+}
+.tk b {
+  margin-left: auto;
+  font-size: 1.3em;
+  font-weight: 400;
+  color: var(--gold);
+  white-space: nowrap;
+}
+.tk em,
 td em {
   font-style: normal;
   color: var(--ink-dim);
+}
+.tk em.up {
+  color: #6fd65a;
+}
+.tk em.down {
+  color: #ff6b6b;
 }
 td em.up {
   color: #7ae860;
@@ -255,18 +302,55 @@ td em.up {
 td em.down {
   color: #ff7b7b;
 }
-/* ---- right column: contracts above, map below ---- */
+.tk em {
+  white-space: nowrap;
+}
+.tk em::before {
+  content: '- ';
+}
+.tk em.up::before {
+  content: '+ ';
+  content: '\25B2 ';
+}
+.tk em.down::before {
+  content: '\25BC ';
+}
+.tk.ev span {
+  color: var(--gold);
+}
+.evt {
+  align-self: center;
+  margin: 0 0.6em;
+  padding: 0.1em 0.7em;
+  background: var(--gold);
+  color: #2a1c00;
+  text-shadow: none;
+}
+
+/* ---- right column ---- */
+.win.contracts {
+  position: absolute;
+  right: calc(var(--u) * 10);
+  top: calc(var(--u) * 126);
+  width: calc(var(--u) * 270);
+}
+.win.contracts .wb {
+  padding: 0;
+}
 #contracts {
+  background: var(--slot-dk);
   color: var(--ink);
-  font-size: 0.8em;
-  padding: 0.1em 0;
+  margin: 0 3px 3px;
+  min-height: calc(var(--u) * 34);
+  border: 2px solid;
+  border-color: #1a1a1a #fff #fff #1a1a1a;
 }
 .ct {
   display: grid;
   grid-template-columns: 1fr auto auto;
   gap: 0.8em;
-  padding: 0.1em 0.6em;
-  font-variant-numeric: tabular-nums;
+  padding: 0.25em 0.6em;
+  text-shadow: 2px 2px 0 #1a1a1a;
 }
 .ct span {
   color: var(--gold);
@@ -292,35 +376,12 @@ td em.down {
 .keys.fade {
   opacity: 0;
 }
-#mapwin {
-  margin-top: auto;
-  display: grid;
-  justify-items: end;
-  gap: calc(var(--u) * 3);
+.win.contracts {
+  pointer-events: none;
 }
-.maptools {
-  display: flex;
-  gap: calc(var(--u) * 3);
-}
-.maptools button {
-  padding: 0 0.45em 0.1em;
-  font-size: 0.7em;
-}
-#minimap {
-  display: block;
-  width: calc(var(--u) * 132);
-  height: calc(var(--u) * 132);
-  background: #000;
-  border: 2px solid #000;
-  opacity: 0.85;
-}
-#mapwin[data-size='large'] #minimap {
-  width: calc(var(--u) * 270);
-  height: calc(var(--u) * 270);
-  opacity: 1;
-}
-#mapwin[data-size='hidden'] #minimap {
-  display: none;
+.win.contracts .wt button {
+  padding: 0.1em 0.35em;
+  font-size: 0.65em;
 }
 .discovery-log {
   max-height: 48vh;
@@ -341,7 +402,7 @@ td em.down {
 #banner {
   position: absolute;
   left: 50%;
-  top: calc(var(--u) * 70);
+  top: calc(var(--u) * 180);
   transform: translateX(-50%);
   padding: 0.2em 1.2em 0.3em;
   font-size: 1.4em;
@@ -360,7 +421,7 @@ td em.down {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  top: calc(var(--u) * 10);
+  top: calc(var(--u) * 126);
   width: calc(var(--u) * 460);
   color: #ff8d8d;
   text-align: center;
@@ -374,7 +435,7 @@ td em.down {
 #toasts {
   display: grid;
   gap: 3px;
-  font-size: 0.8em;
+  width: calc(var(--u) * 330);
 }
 .toast {
   background: var(--dark);
@@ -426,7 +487,7 @@ td em.down {
   left: 50%;
   bottom: calc(var(--u) * 10);
   transform: translateX(-50%);
-  width: calc(var(--u) * 440);
+  width: calc(var(--u) * 9 * 64 + var(--u) * 4);
 }
 .vitals {
   display: flex;
@@ -460,37 +521,16 @@ td em.down {
 .xp.shield i {
   background: #56b9e8;
 }
-.hold {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: calc(var(--u) * 8);
-}
 #hotbar {
   display: flex;
   background: #000;
   padding: 2px;
-}
-#v-pulse,
-#v-cargo {
-  min-width: 4.5em;
-  font-variant-numeric: tabular-nums;
-  text-shadow: 2px 2px 0 var(--shadow);
-}
-#v-cargo.full {
-  color: #ff8d8d;
-}
-#v-pulse {
-  text-align: right;
-  color: #8fd8ff;
-}
-#v-pulse.cooling {
-  color: #9aa4ad;
+  pointer-events: auto;
 }
 .slot {
   position: relative;
-  width: calc(var(--u) * 50);
-  height: calc(var(--u) * 50);
+  width: calc(var(--u) * 64);
+  height: calc(var(--u) * 64);
   background: var(--slot);
   border: 3px solid;
   border-color: #373737 #fff #fff #373737;
@@ -499,7 +539,7 @@ td em.down {
   margin-right: 0;
 }
 .slot .ic {
-  width: calc(var(--u) * 32);
+  width: calc(var(--u) * 42);
   height: auto;
   opacity: 0.3;
   filter: grayscale(1);
@@ -512,7 +552,7 @@ td em.down {
   position: absolute;
   right: 3px;
   bottom: -1px;
-  font-size: 1.25em;
+  font-size: 1.6em;
   color: #fff;
 }
 .slot .n:empty {
@@ -520,6 +560,15 @@ td em.down {
 }
 .slot.has {
   background: #9a9a9a;
+}
+#v-cargo.full {
+  color: #ff8d8d;
+}
+#v-pulse {
+  color: #8fd8ff;
+}
+#v-pulse.cooling {
+  color: #9aa4ad;
 }
 
 /* ---- overlays ---- */
@@ -588,16 +637,11 @@ td em.down {
   width: 100%;
   font-size: 1.3em;
 }
-.menu .daily-panel + .sub-h,
 .menu .tally + .sub-h {
   margin-top: 1em;
 }
 .tally small {
   color: #555;
-}
-.menu .daily-quest button {
-  min-width: 4.5em;
-  font-variant-numeric: tabular-nums;
 }
 
 /* ---- menu ---- */
@@ -918,16 +962,18 @@ td em.down {
   #touch-controls {
     display: block;
   }
-  .keyhint {
+  #bar {
+    width: calc(var(--u) * 250);
+  }
+  .win.contracts {
+    width: calc(var(--u) * 220);
+  }
+  #pricebar {
+    left: calc(var(--u) * 265);
+  }
+  #ticker .tk span,
+  #ticker .tk em {
     display: none;
-  }
-  /* the sticks own the bottom corners, so the map moves up */
-  #right {
-    bottom: auto;
-  }
-  #mapwin {
-    order: -1;
-    margin-top: 0;
   }
   .keys {
     display: none;
@@ -950,7 +996,11 @@ td em.down {
   }
 }
 
-/* ---- station window ---- */
+/* ---- station: a full-screen shop, the game is not visible behind it ---- */
+.shop-wrap {
+  background: var(--bg);
+  place-items: stretch;
+}
 .shop {
   background: var(--panel);
   color: var(--txt);
@@ -960,30 +1010,131 @@ td em.down {
     inset -3px -3px 0 var(--lo);
   padding: 3px;
   pointer-events: auto;
-  width: calc(var(--u) * 980);
-  max-height: calc(var(--u) * 700);
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  /* readable on a phone, large on a big monitor */
+  font-size: clamp(14px, calc(var(--u) * 22), 40px);
+}
+.shop > .wt {
+  gap: 1em;
+  font-size: 1.2em;
 }
 .shop .wb {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  gap: 0.5em;
   min-height: 0;
-  padding: 0.3em 0.6em 0.6em;
+  padding: 0.3em 0.8em 0.7em;
 }
-.shop-top {
+.funds {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  margin-bottom: 0.3em;
+  align-items: center;
+  gap: 0.5em;
 }
+.funds .lcd {
+  color: #6b4400;
+  font-size: 1.6em;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.shop button {
+  touch-action: manipulation;
+}
+
+.art {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  padding: 0.4em;
+  background: var(--slot-dk);
+  border: 2px solid;
+  border-color: #1a1a1a #fff #fff #1a1a1a;
+}
+.art svg {
+  width: 100%;
+  height: 100%;
+}
+
+.pumps {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 0.6em;
+}
+.pump {
+  display: grid;
+  grid-template-columns: 4.6em 1fr;
+  align-content: center;
+  align-items: center;
+  gap: 0.35em 0.7em;
+  padding: 0.5em;
+  background: #b0b0b0;
+  border: 3px solid var(--lo);
+}
+.pump .art {
+  grid-row: 1 / span 2;
+}
+.pump.low {
+  border-color: #b02a2a;
+}
+.gauge-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  font-variant-numeric: tabular-nums;
+}
+.gauge-head b {
+  font-weight: 400;
+  font-size: 1.5em;
+  text-transform: uppercase;
+}
+.gauge-head em {
+  margin-left: auto;
+  padding: 0 0.4em;
+  font-style: normal;
+  text-transform: uppercase;
+  color: #fff;
+  background: #b02a2a;
+}
+.pump .track {
+  height: 0.9em;
+}
+.pump.refuel .track i {
+  background: var(--gold);
+}
+.pump.repair .track i {
+  background: #d83a3a;
+}
+.pump button {
+  font-size: 1.4em;
+  padding: 0.15em 0.5em 0.2em;
+}
+.pump.refuel button:not(:disabled) {
+  background: #9a6100;
+  box-shadow:
+    inset 2px 2px 0 #d99a2b,
+    inset -2px -2px 0 #5c3a00;
+}
+.both {
+  display: grid;
+  place-content: center;
+  gap: 0.2em;
+}
+.both b {
+  font-weight: 400;
+  font-size: 1.4em;
+}
+
 .tabs {
   display: flex;
   gap: 3px;
 }
 .tab {
-  text-shadow: 2px 2px 0 var(--shadow);
-  padding: 0.15em 1.2em 0.25em;
+  flex: 1;
+  font-size: 1.15em;
+  padding: 0.2em 0.4em 0.3em;
 }
 .tab.on {
   background: #4f8f35;
@@ -991,21 +1142,83 @@ td em.down {
     inset 2px 2px 0 #7cc15a,
     inset -2px -2px 0 #2f5c1d;
 }
-.funds {
-  display: flex;
-  align-items: center;
-  gap: 0.6em;
-  color: var(--txt);
-}
-.funds .lcd {
-  color: #8a5a00;
-  font-size: 1.5em;
-}
 .tabbody {
   flex: 1;
+  min-height: 0;
   overflow: auto;
-  min-height: calc(var(--u) * 330);
-  padding: 0.3em 0;
+  overscroll-behavior: contain;
+}
+.shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(11em, 100%), 1fr));
+  gap: 0.6em;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shelf.ores {
+  grid-template-columns: repeat(auto-fit, minmax(min(10em, 100%), 1fr));
+}
+.item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3em;
+  min-width: 0;
+  padding: 0.6em;
+  text-align: center;
+  background: #b0b0b0;
+  border: 2px solid;
+  border-color: #fff var(--lo) var(--lo) #fff;
+}
+.item .art {
+  width: min(100%, 6.5em);
+}
+.item h3,
+.item p {
+  margin: 0;
+}
+.item h3 {
+  font-weight: 400;
+  font-size: 1.25em;
+  color: #000;
+}
+.price {
+  padding: 0 0.6em 0.05em;
+  font-size: 1.4em;
+  color: #2a1c00;
+  background: var(--gold);
+  border: 2px solid #000;
+  font-variant-numeric: tabular-nums;
+}
+.price small {
+  font-size: 0.7em;
+}
+.info em {
+  font-style: normal;
+}
+.info em.up {
+  color: #1f5a10;
+}
+.info em.down {
+  color: #8a1f1f;
+}
+.level {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.item button {
+  width: 100%;
+  margin-top: auto;
+  font-size: 1.1em;
+}
+.sell-all {
+  width: 100%;
+  margin-top: 0.7em;
+  font-size: 1.4em;
 }
 .sub-h {
   color: var(--txt);
@@ -1013,64 +1226,16 @@ td em.down {
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
-.sub-h + table {
-  margin-bottom: 0.8em;
-}
-table.grid {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  background: var(--slot-dk);
-  color: var(--ink);
-  border: 2px solid;
-  border-color: #1a1a1a #fff #fff #1a1a1a;
-  text-shadow: 2px 2px 0 #1a1a1a;
-}
-table.grid th {
-  color: var(--ink-dim);
-  text-align: left;
-  font-weight: 400;
-  text-transform: uppercase;
-  padding: 0.25em 0.7em;
-  border-bottom: 2px solid #1a1a1a;
-}
-table.grid td {
-  padding: 0.25em 0.7em;
-  border-bottom: 2px solid #2a2a2a;
-  vertical-align: middle;
-}
-table.grid tbody tr:hover td {
-  background: #444;
-}
-table.grid tfoot td {
-  border-top: 2px solid #1a1a1a;
-  border-bottom: 0;
-  color: #fff;
-}
-table.grid .num {
-  text-align: right;
-}
-table.grid .r {
-  text-align: right;
-  white-space: nowrap;
-  width: 1%;
-}
-table.grid td.num {
-  color: var(--gold);
-}
-table.grid .desc {
-  color: var(--ink-dim);
-}
-table.grid button {
-  padding: 0 0.8em 0.1em;
+.shelf + .sub-h,
+.note + .sub-h {
+  margin-top: 0.9em;
 }
 .evtag {
-  margin-left: 0.7em;
+  margin-left: 0.5em;
   padding: 0 0.4em;
-  background: var(--gold);
-  color: #2a1c00;
-  text-shadow: none;
-  font-size: 0.8em;
+  color: #fff;
+  background: #000;
+  font-size: 0.85em;
   text-transform: uppercase;
 }
 .pips {
@@ -1094,23 +1259,108 @@ table.grid button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1em;
-  margin-top: 0.4em;
+  flex-wrap: wrap;
+  gap: 0.5em 1em;
   color: var(--txt);
 }
 .quota {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 0.8em;
+  flex-wrap: wrap;
+  gap: 0.3em 0.8em;
 }
 .quota .track {
   flex: 1;
+  min-width: 6em;
 }
 .quota .gate {
   color: #000;
 }
 .statusbar button {
-  font-size: 1.15em;
-  padding: 0.15em 1.8em 0.25em;
+  font-size: 1.5em;
+  padding: 0.15em 2em 0.25em;
+}
+/* while docked, messages sit over the shop, just above the launch bar */
+#ui:has(.shop-wrap) #bar,
+#ui:has(.shop-wrap) #touch-controls {
+  display: none;
+}
+#ui:has(.shop-wrap) #topleft {
+  z-index: 5;
+  top: auto;
+  left: 50%;
+  bottom: 4.5em;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+/* narrow or short screens scroll the whole station, not just the shelf */
+@media (max-width: 760px), (max-height: 560px) {
+  .shop .wb {
+    overflow: auto;
+  }
+  .tabbody {
+    flex: none;
+    overflow: visible;
+  }
+  .statusbar {
+    position: sticky;
+    bottom: -0.7em;
+    padding: 0.3em 0;
+    background: var(--panel);
+  }
+  .statusbar .gate {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .pumps {
+    grid-template-columns: 1fr;
+  }
+  .shelf,
+  .shelf.ores {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---- company shop, in the menu column ---- */
+.wares {
+  display: grid;
+  gap: 0.5em;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ware {
+  display: grid;
+  grid-template-columns: 3.6em 1fr auto;
+  align-items: center;
+  gap: 0.6em;
+}
+.ware h3,
+.ware p {
+  margin: 0;
+  font-weight: 400;
+}
+.ware h3 {
+  font-size: 1.1em;
+  color: #000;
+}
+.ware p,
+.ware small {
+  font-size: 0.85em;
+}
+.ware button {
+  display: grid;
+  min-width: 4.8em;
+  padding: 0.15em 0.4em;
+  font-variant-numeric: tabular-nums;
+}
+.ware button b {
+  font-weight: 400;
+  font-size: 1.4em;
+}
+.wares + .sub-h {
+  margin-top: 1em;
 }

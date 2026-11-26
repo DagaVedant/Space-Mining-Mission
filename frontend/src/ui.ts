@@ -15,7 +15,7 @@ import {
 } from './data';
 import { sfx } from './audio';
 import { oreIcon } from './oreart';
-import type { MarketState } from './market';
+import { priceOf, targetMult, type MarketState } from './market';
 import type { Account } from './cloud';
 import { loadSettings, saveSettings, type ControlAction } from './settings';
 import {
@@ -41,6 +41,7 @@ import {
   type CompanyUpgradeId,
   type RunReport,
 } from './company';
+import { shopArt } from './shopart';
 import { PERKS, claimsFor, type PerkDef, type PerkId, type RunEnd } from './run';
 import type { VoyageInfo } from './voyage';
 
@@ -59,8 +60,7 @@ export interface HudState {
   cargo: Cargo;
   cargoMax: number;
   money: number;
-  bossName: string | null;
-  hasGate: boolean;
+  place: string;
   earned: number;
   goal: number;
   contracts: Contract[];
@@ -115,7 +115,6 @@ let shopApi: ShopApi | null = null;
 let shopTimer = 0;
 let pressed = false;
 let toastCount = 0;
-let mapKey = 'N';
 let shopHtml = '';
 let shopTab = '';
 
@@ -163,77 +162,38 @@ function buildHud(): void {
   const h = document.createElement('div');
   h.id = 'hud';
   h.className = 'hidden';
-  const slots = ORE_IDS.map(
-    (o) => `<div class="slot" id="slot-${o}" title="${ORES[o].name}">${oreIcon(o, 'ic')}<b class="n"></b></div>`,
-  ).join('');
+  const slots = Array.from({ length: 9 }, (_, i) => {
+    const o = ORE_IDS[i];
+    if (!o) return '<div class="slot"></div>';
+    return `<div class="slot" id="slot-${o}" title="${ORES[o].name}">${oreIcon(o, 'ic')}<b class="n"></b></div>`;
+  }).join('');
   h.innerHTML = `
     <div id="hurt"></div>
     <div id="flare"></div>
-    <div id="left">
-      <div id="bar" class="plate">
-        <div class="cash"><span id="money"></span></div>
-        <div id="goal-text" class="dimt"></div>
-        <div id="next-text" role="status" aria-live="polite"></div>
-      </div>
-      <div id="toasts" aria-live="polite"></div>
+    <div id="topleft">
+    <div id="bar" class="plate">
+      <div class="cash"><span id="money"></span></div>
+      <div id="sector-name"></div>
+      <div id="goal-text" class="dimt"></div>
+      <div id="mission-text" role="status" aria-live="polite"></div>
+      <div id="v-cargo" class="dimt"></div>
+      <div id="v-pulse"></div>
     </div>
-    <div id="right">
-      <div id="contracts" class="plate hidden" aria-label="Active contracts"></div>
-      <div id="mapwin" data-size="small">
-        <div class="maptools">
-          <button id="map-size" type="button" aria-label="Change map size">MAP <span id="map-key" class="keyhint"></span></button>
-          <button id="discovery-log" type="button" aria-label="Open discovery log">LOG <span id="discovery-count">0/0</span></button>
-        </div>
-        <canvas id="minimap" width="180" height="180"></canvas>
-      </div>
+    <div id="toasts" aria-live="polite"></div>
     </div>
+    <div class="win contracts"><div class="wt"><span>CONTRACTS</span><button id="discovery-log" type="button" aria-label="Open discovery log">LOG <span id="discovery-count">0/0</span></button></div><div class="wb" id="contracts"></div></div>
     <div id="bossbar" class="hidden"><span id="boss-name"></span><div class="track"><i id="b-boss"></i></div></div>
     <div id="banner" class="hidden"></div>
     <div id="hint" class="hidden"></div>
+    <div id="pricebar" class="plate"><div class="pl">PRICES</div><div id="ticker"></div></div>
     <div class="keys" id="keys">WASD move | Shift turbo | Space or click fire (aim with mouse) | E dock / gate | Esc pause | M mute</div>
     <div id="dock">
       <div class="vitals"><div id="hearts" class="icons"></div><div id="bolts" class="icons"></div></div>
       <div id="shield-bar" class="xp shield hidden"><i id="b-shield"></i></div>
       <div class="xp" title="Sector quota"><i id="b-goal"></i></div>
-      <div class="hold"><span id="v-pulse"></span><div id="hotbar">${slots}</div><span id="v-cargo"></span></div>
+      <div id="hotbar">${slots}</div>
     </div>`;
   root().appendChild(h);
-  el('map-size').addEventListener('click', (event) => {
-    (event.currentTarget as HTMLElement).blur(); // so Space keeps firing instead of re-pressing it
-    hud.cycleMap();
-  });
-  setMapSize(readMapSize());
-}
-
-const MAP_SIZES = ['small', 'large', 'hidden'] as const;
-type MapSize = (typeof MAP_SIZES)[number];
-const MAP_KEY = 'asteroid-breaker-map-size';
-
-function readMapSize(): MapSize {
-  try {
-    const stored = localStorage.getItem(MAP_KEY);
-    return MAP_SIZES.find((size) => size === stored) ?? 'small';
-  } catch {
-    return 'small';
-  }
-}
-
-function setMapSize(size: MapSize): void {
-  el('mapwin').dataset.size = size;
-  try {
-    localStorage.setItem(MAP_KEY, size);
-  } catch {
-    // the size just resets next visit
-  }
-}
-
-/** The one thing to do next. */
-function nextStep(s: HudState): string {
-  const { mission } = s;
-  if (!mission.complete) return `Next: ${mission.description} (${mission.progress}/${mission.target})`;
-  if (s.earned < s.goal) return `Next: earn ${money(s.goal - s.earned)} more`;
-  if (s.bossName) return `Next: destroy the ${s.bossName}`;
-  return s.hasGate ? 'Next: fly to the warp gate' : 'Free play: keep mining';
 }
 
 export const hud = {
@@ -245,7 +205,6 @@ export const hud = {
     el('banner').classList.add('hidden');
     const settings = loadSettings();
     const keyLabel = (key: string): string => KEY_LABELS[key] ?? key;
-    mapKey = settings.bindings.map;
     setText(
       'keys',
       `${keyLabel(settings.bindings.up)} ${keyLabel(settings.bindings.left)} ${keyLabel(settings.bindings.down)} ${keyLabel(settings.bindings.right)} move | ${keyLabel(settings.bindings.boost)} boost | ${keyLabel(settings.bindings.fire)} fire | ${keyLabel(settings.bindings.interact)} dock | ${keyLabel(settings.bindings.pause)} pause`,
@@ -255,14 +214,6 @@ export const hud = {
   hide(): void {
     if (!hudBuilt) return;
     el('hud').classList.add('hidden');
-  },
-  cycleMap(): void {
-    if (!hudBuilt) return;
-    const now = MAP_SIZES.indexOf(el('mapwin').dataset.size as MapSize);
-    setMapSize(MAP_SIZES[(now + 1) % MAP_SIZES.length]);
-  },
-  minimap(): CanvasRenderingContext2D {
-    return (el('minimap') as HTMLCanvasElement).getContext('2d') as CanvasRenderingContext2D;
   },
   update(s: HudState): void {
     const used = cargoTotal(s.cargo);
@@ -282,17 +233,17 @@ export const hud = {
       setText(`slot-${o}:n`, s.cargo[o] > 0 ? String(s.cargo[o]) : '', slot.querySelector('.n') as HTMLElement);
     }
     setText('money', money(s.money));
-    setText('map-key', KEY_LABELS[mapKey] ?? mapKey);
     setWidth('b-goal', (s.earned / s.goal) * 100);
     el('shield-bar').classList.toggle('hidden', s.shieldMax <= 0);
     if (s.shieldMax > 0) setWidth('b-shield', (s.shield / s.shieldMax) * 100);
     setText('goal-text', s.earned >= s.goal ? 'Quota met' : `Quota ${money(s.earned)} / ${money(s.goal)}`);
-    setText('next-text', nextStep(s));
+    setText('sector-name', s.place);
+    setText('mission-text', `${s.mission.complete ? 'DONE' : 'MISSION'} ${s.mission.description} - ${s.mission.progress}/${s.mission.target}`);
     setText('discovery-count', `${s.discoveries}/${s.discoveryTotal}`);
-    setText('v-cargo', `${used}/${s.cargoMax}`);
+    setText('v-cargo', `Hold ${used} / ${s.cargoMax}`);
     el('v-cargo').classList.toggle('full', used >= s.cargoMax);
     const ready = s.pulse.wait <= 0;
-    setText('v-pulse', ready ? `${KEY_LABELS[s.pulse.key] ?? s.pulse.key} Pulse` : `Pulse ${Math.ceil(s.pulse.wait)}s`);
+    setText('v-pulse', ready ? `Pulse ready (${KEY_LABELS[s.pulse.key] ?? s.pulse.key})` : `Pulse ${Math.ceil(s.pulse.wait)}s`);
     el('v-pulse').classList.toggle('cooling', !ready);
     const csh = s.contracts
       .map((c) => {
@@ -302,10 +253,24 @@ export const hud = {
         return `<div class="ct"><b style="color:${ORES[c.ore].css}">${c.qty} ${ORES[c.ore].name}</b><span>${money(c.reward)}</span><em>${m}:${sc}</em></div>`;
       })
       .join('');
-    if (cache.get('ct') !== csh) {
-      cache.set('ct', csh);
-      el('contracts').innerHTML = csh;
-      el('contracts').classList.toggle('hidden', !csh);
+    const cshown = csh || '<div class="empty">No active contracts. Pick some up at the station.</div>';
+    if (cache.get('ct') !== cshown) {
+      cache.set('ct', cshown);
+      el('contracts').innerHTML = cshown;
+    }
+    const tk = ORE_IDS.map((o) => {
+      const p = s.market.prices[o];
+      const pv = s.market.prev[o];
+      const ch = ((p - pv) / pv) * 100;
+      const cls = ch > 0.4 ? 'up' : ch < -0.4 ? 'down' : '';
+      const sign = ch > 0.4 ? '+' : '';
+      const ev = targetMult(s.market, o) !== 1 ? ' ev' : '';
+      return `<div class="tk${ev}">${oreIcon(o)}<span>${ORES[o].name}</span><b>${money(priceOf(s.market, o))}</b><em class="${cls}">${sign}${ch.toFixed(0)}%</em></div>`;
+    }).join('');
+    const tkFull = tk + (s.market.events.length ? `<div class="evt">${s.market.events.map((e) => e.label).join(' / ')}</div>` : '');
+    if (cache.get('tk') !== tkFull) {
+      cache.set('tk', tkFull);
+      el('ticker').innerHTML = tkFull;
     }
     const bb = el('bossbar');
     if (s.boss) {
@@ -322,7 +287,7 @@ export const hud = {
     t.textContent = msg;
     t.dataset.n = String(++toastCount);
     box.appendChild(t);
-    while (box.children.length > 3) box.removeChild(box.firstChild as Node);
+    while (box.children.length > 5) box.removeChild(box.firstChild as Node);
     window.setTimeout(() => t.classList.add('out'), 4200);
     window.setTimeout(() => t.remove(), 4800);
   },
@@ -462,8 +427,7 @@ export function showDiscoveryLog(save: SaveData, onClose: () => void): void {
   }).join('');
   showOverlay(
     'DISCOVERY LOG',
-    `${save.discoveries.length} / ${DISCOVERY_SITES.length} sites recovered. Sites are optional and do not block sector gates.<br>
-     Map: white ship, orange station and gate, purple gravity well, blue planet, red pirate, gold salvage site.`,
+    `${save.discoveries.length} / ${DISCOVERY_SITES.length} sites recovered. Sites are optional and do not block sector gates.`,
     [{ label: 'Back to flight', primary: true, onClick: onClose }],
     `<ul class="discovery-log">${rows}</ul>`,
   );
@@ -486,7 +450,6 @@ const CONTROL_LABELS: Record<ControlAction, string> = {
   interact: 'Dock / interact',
   pause: 'Pause',
   mute: 'Mute audio',
-  map: 'Map size',
   pulse: 'Pulse',
 };
 const REBINDABLE_KEYS = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'SPACE', 'SHIFT', 'E', 'ESC', 'M', 'N', 'Q', 'F'];
@@ -629,8 +592,9 @@ function companyPage(company: CompanyState, away: number): string {
   const upgrades = COMPANY_UPGRADES.map((upgrade) => {
     const level = company.upgrades[upgrade.id];
     const cost = companyCost(upgrade.id, level);
-    return `<div class="daily-quest"><span>${upgrade.name} <small>level ${level}</small></span><small>${upgrade.desc}</small>
-      <button type="button" data-buy="${upgrade.id}" aria-label="Buy ${upgrade.name} for ${cost} Claims" ${company.claims >= cost ? '' : 'disabled'}>${whole(cost)}</button></div>`;
+    return `<li class="ware">${art(shopArt(`co_${upgrade.id}`))}
+      <div><h3>${upgrade.name} <small>level ${level}</small></h3><p>${upgrade.desc}</p></div>
+      <button type="button" data-buy="${upgrade.id}" aria-label="Buy ${upgrade.name} for ${cost} Claims" ${company.claims >= cost ? '' : 'disabled'}><b>${whole(cost)}</b> Claims</button></li>`;
   }).join('');
   const { stats } = company;
   const records = tally([
@@ -648,7 +612,7 @@ function companyPage(company: CompanyState, away: number): string {
   );
   return `${away > 0 ? `<p class="menu-note" role="status">While you were gone, your outposts earned <b>${whole(away)} Claims</b>.</p>` : ''}
     <p class="claims">${whole(company.claims)} Claims</p>
-    <div class="daily-panel">${upgrades}</div>
+    <ul class="wares">${upgrades}</ul>
     <div class="sub-h">Milestones, paid when a run ends</div>${milestones}
     <div class="sub-h">Records</div>${records}`;
 }
@@ -708,7 +672,6 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
     <li>Campaign sectors require both the quota and the displayed mission objective to open the next gate</li>
     <li><b>E</b> dock at the station to sell, repair and upgrade</li>
     <li><b>Q</b> pulse clears enemy shots and shoves rocks, then recharges</li>
-    <li><b>N</b> cycles the map: small, large, hidden</li>
     <li>Break rocks in quick succession to build a streak that drops extra ore</li>
     <li>Expeditions open after sector 2. Claims from them buy permanent Company upgrades</li>
     <li>Daily contracts reward credits and help unlock pilots and ship skins</li>
@@ -887,12 +850,42 @@ function pips(level: number, max: number): string {
 type Tab = 'market' | 'upgrades' | 'contracts';
 let tab: Tab = 'market';
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'market', label: 'Market' },
+  { id: 'market', label: 'Sell ore' },
   { id: 'upgrades', label: 'Upgrades' },
   { id: 'contracts', label: 'Contracts' },
 ];
 
 const mmss = (s: number): string => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+/** Station art: a big picture in a dark display slot. */
+const art = (svg: string): string => `<div class="art">${svg}</div>`;
+
+/** A fuel or hull pump: gauge, price and one big button. */
+function pump(act: 'refuel' | 'repair', have: number, max: number, cost: number, money_: number): string {
+  const fuel = act === 'refuel';
+  const missing = Math.ceil(max - have);
+  const share = have / max;
+  const low = share < (fuel ? 0.4 : 0.5);
+  const name = fuel ? 'Fuel' : 'Hull';
+  const label =
+    missing <= 0
+      ? fuel
+        ? 'Tank full'
+        : 'Hull sound'
+      : money_ < 1
+        ? 'No cash'
+        : money_ < cost
+          ? `${fuel ? 'Add' : 'Patch'} what ${money(money_)} buys`
+          : `${fuel ? 'Refuel' : 'Repair'} ${money(cost)}`;
+  return `<div class="pump ${act}${low ? ' low' : ''}">
+    ${art(shopArt(fuel ? 'fuel' : 'patch'))}
+    <div class="gauge">
+      <div class="gauge-head"><b>${name}</b><span>${Math.ceil(have)} / ${max}</span>${low ? `<em>Low ${name.toLowerCase()}</em>` : ''}</div>
+      <div class="track" role="meter" aria-label="${name}" aria-valuemin="0" aria-valuemax="${max}" aria-valuenow="${Math.ceil(have)}"><i style="width:${Math.max(0, Math.min(100, share * 100))}%"></i></div>
+    </div>
+    <button class="buy" data-act="${act}" ${missing > 0 && money_ >= 1 ? '' : 'disabled'}>${label}</button>
+  </div>`;
+}
 
 function renderShop(): void {
   const api = shopApi;
@@ -910,84 +903,77 @@ function renderShop(): void {
   const act = api.active();
   const offers = api.offers();
 
+  const rc = repairCost(Math.ceil(stats.hullMax - hull), sector);
+  const fc = refuelCost(Math.ceil(stats.fuelMax - fuel), sector);
+  const service = `<div class="pumps">
+    ${pump('refuel', fuel, stats.fuelMax, fc, save.money)}
+    ${pump('repair', hull, stats.hullMax, rc, save.money)}
+    <button class="both" data-act="service" ${rc + fc > 0 && save.money >= 1 ? '' : 'disabled'}><span>Fill and fix</span><b>${money(rc + fc)}</b></button>
+  </div>`;
+
   let body: string;
   if (tab === 'market') {
     let holdValue = 0;
-    const rows = ORE_IDS.map((o) => {
+    const items = ORE_IDS.map((o) => {
       const p = api.market.prices[o];
       holdValue += p * cargo[o];
       const ch = ((p - api.market.prev[o]) / api.market.prev[o]) * 100;
-      const cls = ch > 0.4 ? 'up' : ch < -0.4 ? 'down' : '';
+      const [cls, trend] = ch > 0.4 ? ['up', `Up ${ch.toFixed(0)}%`] : ch < -0.4 ? ['down', `Down ${(-ch).toFixed(0)}%`] : ['', 'Steady'];
       const ev = api.market.events.find((e) => e.ore === o);
-      return `<tr>
-        <td>${oreIcon(o, 'oi sw')}${ORES[o].name}${ev ? `<small class="evtag">${ev.label.split(':')[0]}</small>` : ''}</td>
-        <td class="num">${money(p)}</td>
-        <td class="num"><em class="${cls}">${ch > 0.4 ? '+' : ''}${ch.toFixed(0)}%</em></td>
-        <td class="num">${cargo[o]}</td>
-        <td class="num">${money(p * cargo[o])}</td>
-        <td class="r"><button data-act="sell" data-id="${o}" ${cargo[o] ? '' : 'disabled'}>Sell</button></td>
-      </tr>`;
+      return `<li class="item">
+        ${art(oreIcon(o, ''))}
+        <h3>${ORES[o].name}</h3>
+        <p class="price">${money(p)} <small>each</small></p>
+        <p class="info"><em class="${cls}">${trend}</em>${ev ? `<span class="evtag">${ev.label.split(':')[0]}</span>` : ''}</p>
+        <p class="info">In hold: ${cargo[o]}</p>
+        <button class="buy" data-act="sell" data-id="${o}" ${cargo[o] ? '' : 'disabled'}>${cargo[o] ? `Sell for ${money(p * cargo[o])}` : 'Nothing to sell'}</button>
+      </li>`;
     }).join('');
-    const hullMissing = Math.ceil(stats.hullMax - hull);
-    const fuelMissing = Math.ceil(stats.fuelMax - fuel);
-    const rc = repairCost(hullMissing, sector);
-    const fc = refuelCost(fuelMissing, sector);
     body = `
-      <div class="sub-h">Ore buyers</div>
-      <table class="grid">
-        <thead><tr><th>Ore</th><th class="num">Price</th><th class="num">Trend</th><th class="num">Hold</th><th class="num">Value</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-        <tfoot><tr><td colspan="4">Total cargo value</td><td class="num">${money(holdValue)}</td><td class="r"><button class="primary" data-act="sellall" ${cargoTotal(cargo) ? '' : 'disabled'}>Sell all</button></td></tr></tfoot>
-      </table>
-      <div class="sub-h">Ship service</div>
-      <table class="grid">
-        <thead><tr><th>System</th><th class="num">Level</th><th class="num">Cost</th><th></th></tr></thead>
-        <tbody>
-          <tr><td>Hull</td><td class="num">${Math.ceil(hull)} / ${stats.hullMax}</td><td class="num">${hullMissing > 0 ? money(rc) : '-'}</td><td class="r"><button data-act="repair" ${hullMissing > 0 && save.money >= 1 ? '' : 'disabled'}>Repair</button></td></tr>
-          <tr><td>Fuel</td><td class="num">${Math.ceil(fuel)} / ${stats.fuelMax}</td><td class="num">${fuelMissing > 0 ? money(fc) : '-'}</td><td class="r"><button data-act="refuel" ${fuelMissing > 0 && save.money >= 1 ? '' : 'disabled'}>Refuel</button></td></tr>
-        </tbody>
-        <tfoot><tr><td colspan="2">Full service</td><td class="num">${money(rc + fc)}</td><td class="r"><button data-act="service" ${hullMissing + fuelMissing > 0 ? '' : 'disabled'}>Do both</button></td></tr></tfoot>
-      </table>`;
+      <ul class="shelf ores">${items}</ul>
+      <button class="primary sell-all" data-act="sellall" ${cargoTotal(cargo) ? '' : 'disabled'}>${cargoTotal(cargo) ? `Sell all cargo for ${money(holdValue)}` : 'Cargo hold is empty'}</button>`;
   } else if (tab === 'upgrades') {
-    const rows = UPGRADES.map((u) => {
+    const items = UPGRADES.map((u) => {
       const lvl = save.levels[u.id];
       const maxed = lvl >= u.max;
       const cost = maxed ? 0 : upgradeCost(u.id, lvl);
-      return `<tr>
-        <td><b>${u.name}</b></td>
-        <td class="desc">${u.desc}</td>
-        <td>${pips(lvl, u.max)}</td>
-        <td class="num">${maxed ? '-' : money(cost)}</td>
-        <td class="r"><button data-act="buy" data-id="${u.id}" ${maxed || !canBuyUpgrade(save, u.id) ? 'disabled' : ''}>${maxed ? 'Maxed' : 'Buy'}</button></td>
-      </tr>`;
+      const can = !maxed && canBuyUpgrade(save, u.id);
+      const label = maxed ? 'Maxed' : can ? 'Buy' : save.money < cost ? `Need ${money(cost - save.money)} more` : 'Locked';
+      return `<li class="item">
+        ${art(shopArt(u.id))}
+        <h3>${u.name}</h3>
+        <p class="info">${u.desc}</p>
+        <p class="level">Level ${lvl} / ${u.max} ${pips(lvl, u.max)}</p>
+        <p class="price">${maxed ? 'Sold out' : money(cost)}</p>
+        <button class="buy" data-act="buy" data-id="${u.id}" aria-label="${label} ${u.name}" ${can ? '' : 'disabled'}>${label}</button>
+      </li>`;
     }).join('');
-    body = `<table class="grid">
-      <thead><tr><th>Equipment</th><th>Effect</th><th>Level</th><th class="num">Cost</th><th></th></tr></thead>
-      <tbody>${rows}</tbody></table>`;
+    body = `<ul class="shelf">${items}</ul>`;
   } else {
-    const row = (c: Contract, mode: 'active' | 'offer'): string => {
+    const card = (c: Contract, mode: 'active' | 'offer'): string => {
       const left = Math.max(0, Math.round(c.deadline - clock));
       const have = cargo[c.ore];
       const btn =
         mode === 'offer'
-          ? `<button data-act="accept" data-id="${c.id}" ${act.length >= 2 ? 'disabled' : ''}>Accept</button>`
+          ? `<button class="buy" data-act="accept" data-id="${c.id}" ${act.length >= 2 ? 'disabled' : ''}>${act.length >= 2 ? 'Two already held' : 'Accept'}</button>`
           : have >= c.qty
             ? `<button class="primary" data-act="deliver">Deliver</button>`
-            : `<span class="dim">${have} / ${c.qty} held</span>`;
-      return `<tr>
-        <td>${oreIcon(c.ore, 'oi sw')}${ORES[c.ore].name}</td>
-        <td class="num">${c.qty}</td>
-        <td class="num">${mmss(left)}</td>
-        <td class="num">${money(c.reward)}</td>
-        <td class="r">${btn}</td>
-      </tr>`;
+            : `<button class="buy" disabled>${have} / ${c.qty} in hold</button>`;
+      return `<li class="item">
+        ${art(oreIcon(c.ore, ''))}
+        <h3>${c.qty} ${ORES[c.ore].name}</h3>
+        <p class="price">Pays ${money(c.reward)}</p>
+        <p class="info">Time left ${mmss(left)}</p>
+        ${btn}
+      </li>`;
     };
-    const head = '<thead><tr><th>Ore</th><th class="num">Qty</th><th class="num">Time</th><th class="num">Pays</th><th></th></tr></thead>';
+    const shelf = (list: Contract[], mode: 'active' | 'offer', none: string): string =>
+      list.length ? `<ul class="shelf">${list.map((c) => card(c, mode)).join('')}</ul>` : `<p class="note">${none}</p>`;
     body = `
       <div class="sub-h">Accepted (${act.length} / 2)</div>
-      <table class="grid">${head}<tbody>${act.map((c) => row(c, 'active')).join('') || '<tr><td colspan="5" class="empty">No accepted contracts.</td></tr>'}</tbody></table>
-      <div class="sub-h">Available <button class="mini" data-act="refresh">Reroll</button></div>
-      <table class="grid">${head}<tbody>${offers.map((c) => row(c, 'offer')).join('') || '<tr><td colspan="5" class="empty">No offers right now.</td></tr>'}</tbody></table>
+      ${shelf(act, 'active', 'No accepted contracts.')}
+      <div class="sub-h">On offer <button class="mini" data-act="refresh">Reroll</button></div>
+      ${shelf(offers, 'offer', 'No offers right now.')}
       <p class="note">Contracts are filled automatically when you dock with enough ore. Late contracts pay nothing.</p>`;
   }
 
@@ -1001,28 +987,31 @@ function renderShop(): void {
         ? `Quota: ${money(info.goal - info.earned)} more`
         : `Mission: ${mission.description} (${mission.progress}/${mission.target})`;
   const html = `
-    <div class="wt"><span>HOME STATION - ${info.name.toUpperCase()}</span><button class="x" data-act="launch" title="Launch (E)">X</button></div>
+    <div class="wt"><span>HOME STATION - ${info.name.toUpperCase()}</span><div class="funds"><label>CASH</label><b class="lcd">${money(save.money)}</b></div></div>
     <div class="wb">
-      <div class="shop-top">
-        <div class="tabs">${TABS.map((t) => `<button class="tab ${t.id === tab ? 'on' : ''}" data-act="tab" data-id="${t.id}">${t.label}</button>`).join('')}</div>
-        <div class="funds"><label>CASH</label><b class="lcd">${money(save.money)}</b></div>
-      </div>
+      ${service}
+      <div class="tabs">${TABS.map((t) => `<button class="tab ${t.id === tab ? 'on' : ''}" data-act="tab" data-id="${t.id}" aria-pressed="${t.id === tab}">${t.label}</button>`).join('')}</div>
       <div class="tabbody">${body}</div>
       <div class="statusbar">
-        <div class="quota"><span>${info.quotaLabel}</span><div class="track goal"><i style="width:${pct}%"></i></div><span>${money(info.earned)} / ${money(info.goal)}</span><span class="gate">${mission.complete ? 'Mission complete · ' : ''}${gate}</span></div>
+        <div class="quota"><span>${info.quotaLabel}</span><div class="track goal"><i style="width:${pct}%"></i></div><span>${money(info.earned)} / ${money(info.goal)}</span><span class="gate">${mission.complete ? 'Mission complete - ' : ''}${gate}</span></div>
         <button class="primary" data-act="launch">Launch (E)</button>
       </div>
     </div>`;
   // redrawn every second: replacing identical markup would still drop scroll and focus
   if (box.firstElementChild && html === shopHtml) return;
-  const scroll = shopTab === tab ? (box.querySelector('.tabbody')?.scrollTop ?? 0) : 0;
+  // the list scrolls on a tall screen, the whole body on a short one
+  const same = shopTab === tab;
+  const scroll = same ? (box.querySelector('.tabbody')?.scrollTop ?? 0) : 0;
+  const outer = box.querySelector('.wb')?.scrollTop ?? 0;
   const focused = box.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
   const focusKey = focused?.dataset.act ? `[data-act="${focused.dataset.act}"]${focused.dataset.id ? `[data-id="${focused.dataset.id}"]` : ''}` : '';
   shopHtml = html;
   shopTab = tab;
   box.innerHTML = html;
-  const body_ = box.querySelector('.tabbody');
-  if (body_) body_.scrollTop = scroll;
+  const list = box.querySelector('.tabbody');
+  if (list) list.scrollTop = scroll;
+  const whole_ = box.querySelector('.wb');
+  if (whole_) whole_.scrollTop = outer;
   if (focusKey) box.querySelector<HTMLElement>(focusKey)?.focus({ preventScroll: true });
 }
 
@@ -1032,7 +1021,7 @@ export function openShop(api: ShopApi): void {
   shopApi = api;
   const o = document.createElement('div');
   o.className = 'overlay shop-wrap';
-  o.innerHTML = '<div class="shop" id="shop"></div>';
+  o.innerHTML = '<div class="shop" id="shop" role="dialog" aria-modal="true" aria-label="Home station"></div>';
   root().appendChild(o);
   overlayEl = o;
   o.addEventListener('pointerdown', () => (pressed = true));

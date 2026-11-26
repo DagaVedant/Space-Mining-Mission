@@ -1,3 +1,4 @@
+import { buildBlackHole } from './blackhole';
 import Phaser from 'phaser';
 import { ORES, ORE_IDS, type OreId } from './data';
 import { mulberry32 } from './rng';
@@ -676,6 +677,7 @@ export function buildTextures(scene: Phaser.Scene): void {
   makeDread(scene);
   makeSmall(scene);
   makeStars(scene);
+  buildBlackHole(scene);
   let seed = 1;
   for (const ore of ORE_IDS) {
     for (const sz of SIZES) {

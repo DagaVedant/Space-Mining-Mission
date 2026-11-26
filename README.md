@@ -15,13 +15,13 @@ Play: https://dagavedant.github.io/Space-Mining-Mission/
 - Earn each sector's goal to open the warp gate. Six sectors include new pirate classes and a final Dreadnought encounter.
 - Each sector also has a required objective; meet both it and the earnings quota to unlock the gate. Objective completion grants a credit bonus.
 - Upgrade hull capacity and regeneration, sprint fuel recharge, shields, ore scanning and refining. Mining drones target valuable ore faster. Select unlocked pilots and ship skins, and complete rotating daily quests.
-- Q fires a pulse that clears enemy shots and shoves rocks, then recharges. N cycles the map between small, large and hidden.
+- Q fires a pulse that clears enemy shots and shoves rocks, then recharges.
 - Some rocks are special: volatile ones explode and chain, crystals pay extra if you hit the glowing point, dense cores shrug off light hits, and comets are fast and rich. Breaking rocks in quick succession builds a streak that drops extra ore.
 - Later sectors and deeper expeditions add shielded gunships (flank them), mine layers, scavengers that race you to loose ore, and elite pirates.
 - Esc pauses, M mutes. The settings menu supports key rebinding, aim sensitivity, volume, screen shake, reduced motion, HUD scaling and an optional launch tutorial. Settings and AI progress save locally; campaign progress syncs to your account when signed in.
 - Touch controls support movement, aiming/firing and boosting on mobile layouts. Landscape orientation is recommended.
-- The minimap marks gravity wells, planets, pirates and the warp gate. Pirates and the Dreadnought show visual attack warnings; sector debriefs recap mining, combat, damage and hazard alerts.
-- Find two fixed salvage sites in every sector. Recover wrecks, caches and relics for one-time credits; six discoveries unlock the Voidglass skin. Open the map's Log button to review your collection. Sites are optional and never block sector progression.
+- Pirates and the Dreadnought show visual attack warnings; sector debriefs recap mining, combat, damage and hazard alerts.
+- Find two fixed salvage sites in every sector. Recover wrecks, caches and relics for one-time credits; six discoveries unlock the Voidglass skin. Open the Log button on the contracts panel to review your collection. Sites are optional and never block sector progression.
 - PvP requires an account and an available backend service. Choose casual or seasonal ranked matchmaking, see live connection quality, review your rating and the top three pilots, and rematch after each match.
 
 ## Expeditions and the Company

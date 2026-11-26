@@ -56,7 +56,14 @@ export class MenuScene extends Phaser.Scene {
     this.cameras.main.fadeIn(400, 0, 0, 0);
     this.drifters = [];
     this.scrollX = 0;
-    this.stars = ['stars1', 'stars2', 'stars3'].map((k) => this.add.tileSprite(0, 0, 1280, 720, k).setOrigin(0));
+    this.stars = ['stars1', 'stars2', 'stars3'].map((k) =>
+      this.add.tileSprite(0, 0, this.scale.width, this.scale.height, k).setOrigin(0),
+    );
+    const fit = (): void => {
+      for (const star of this.stars) star.setSize(this.scale.width, this.scale.height);
+    };
+    this.scale.on('resize', fit);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scale.off('resize', fit));
     const sizes: Sz[] = ['L', 'M', 'S'];
     // a few, starting clear of the menu panel on the left
     for (let i = 0; i < 6; i++) {
@@ -231,8 +238,8 @@ export class MenuScene extends Phaser.Scene {
       d.img.y += d.vy * dt;
       d.img.angle += d.spin * dt;
       if (d.img.x < -120) {
-        d.img.x = 1400;
-        d.img.y = Math.random() * 720;
+        d.img.x = this.scale.width + 120;
+        d.img.y = Math.random() * this.scale.height;
       }
     }
   }

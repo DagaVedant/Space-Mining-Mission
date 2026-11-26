@@ -69,17 +69,21 @@ export class PvpScene extends Phaser.Scene {
     super('PvP');
   }
 
+  /** No camera bounds: a window bigger than the arena should still show it in the middle. */
+  private centreArena(): void {
+    this.cameras.main.centerOn(this.world.width / 2, this.world.height / 2);
+  }
+
   create(): void {
     this.settings = loadSettings();
     buildTextures(this);
     this.cameras.main.setBackgroundColor(0x07090c);
     this.physics.world.setBounds(0, 0, this.world.width, this.world.height);
-    this.cameras.main.setBounds(0, 0, this.world.width, this.world.height);
-    this.cameras.main.centerOn(this.world.width / 2, this.world.height / 2);
+    this.centreArena();
     this.drawArena();
     this.shots = this.add.graphics().setDepth(6);
     this.status = this.add
-      .text(640, 24, 'Connecting to the battle network...', {
+      .text(this.scale.width / 2, 24, 'Connecting to the battle network...', {
         fontFamily: 'Bahnschrift, "Segoe UI", system-ui, sans-serif',
         fontSize: '22px',
         color: '#ffffff',
@@ -91,7 +95,7 @@ export class PvpScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(20);
     this.connection = this.add
-      .text(1260, 24, 'Connecting...', {
+      .text(this.scale.width - 20, 24, 'Connecting...', {
         fontFamily: 'Bahnschrift, "Segoe UI", system-ui, sans-serif',
         fontSize: '13px',
         color: '#dedede',
@@ -103,7 +107,7 @@ export class PvpScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(20);
     this.add
-      .text(640, 690, 'Move | Mouse aim | Click / configured fire to shoot | Esc leave | R rematch', {
+      .text(this.scale.width / 2, this.scale.height - 30, 'Move | Mouse aim | Click / configured fire to shoot | Esc leave | R rematch', {
         fontFamily: 'Bahnschrift, "Segoe UI", system-ui, sans-serif',
         fontSize: '16px',
         color: '#c6c6c6',
@@ -125,6 +129,8 @@ export class PvpScene extends Phaser.Scene {
     const dockButton = document.querySelector<HTMLElement>('#touch-controls [data-touch="interact"]');
     if (dockButton) dockButton.style.display = 'none';
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this);
+    this.scale.on('resize', this.centreArena, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scale.off('resize', this.centreArena, this));
     this.connect();
   }
 
@@ -205,13 +211,13 @@ export class PvpScene extends Phaser.Scene {
       this.localId = message.playerId ?? '';
       this.opponent = message.opponent ?? 'Rival pilot';
       this.world = message.world ?? this.world;
-      this.cameras.main.setBounds(0, 0, this.world.width, this.world.height);
+      this.centreArena();
       this.status.setText(
         `${message.ranked ? 'RANKED DOGFIGHT' : 'DOGFIGHT'} · You vs ${this.opponent}` +
           (message.ranked && message.opponentRating !== undefined ? ` · Rating ${message.rating ?? 1000} vs ${message.opponentRating}` : ''),
       );
       this.add
-        .text(640, 62, 'Destroy the rival ship to win the match.', {
+        .text(this.scale.width / 2, 62, 'Destroy the rival ship to win the match.', {
           fontFamily: 'Bahnschrift, "Segoe UI", system-ui, sans-serif',
           fontSize: '17px',
           color: '#e8a44b',
