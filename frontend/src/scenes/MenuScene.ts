@@ -11,10 +11,12 @@ import {
   signOut,
   syncCloudSave,
 } from '../cloud';
+import { buyCompanyUpgrade, collectOutposts } from '../company';
 import { claimDailyQuest, clearSave, loadSave, newSave, persist, setCloudSyncHandler } from '../progress';
 import { resetSession, session } from '../session';
 import { applyGameSettings, closeOverlay, showMenu, type MenuActions } from '../ui';
 import { loadSettings } from '../settings';
+import type { VoyageMode } from '../voyage';
 
 interface Drifter {
   img: Phaser.GameObjects.Image;
@@ -29,6 +31,8 @@ export class MenuScene extends Phaser.Scene {
   private scrollX = 0;
   private menuEpoch = 0;
   private activeMenu = false;
+  /** outpost income banked on this visit, shown until the menu is left */
+  private away = 0;
   private shipPreview!: Phaser.GameObjects.Image;
 
   constructor() {
@@ -68,13 +72,19 @@ export class MenuScene extends Phaser.Scene {
     this.tweens.add({ targets: this.shipPreview, y: 490, duration: 2600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 
     setCloudSyncHandler(syncCloudSave);
-    this.showHome(loadSave());
+    this.away = 0;
     const account = currentAccount();
+    const local = loadSave();
+    // signed in, wait for the cloud save first: writing the local one now could overwrite it
+    if (!account) this.collectAway(local);
+    this.showHome(local);
     if (account) {
       const epoch = this.menuEpoch;
       void restoreCloudSave(loadSave())
         .then((save) => {
-          if (this.activeMenu && epoch === this.menuEpoch) this.showHome(save);
+          if (!this.activeMenu || epoch !== this.menuEpoch) return;
+          this.collectAway(save);
+          this.showHome(save);
         })
         .catch((error: unknown) => {
           if (this.activeMenu && epoch === this.menuEpoch) {
@@ -89,14 +99,30 @@ export class MenuScene extends Phaser.Scene {
     });
   }
 
+  private collectAway(save: ReturnType<typeof newSave> | null): void {
+    if (!save) return;
+    const earned = collectOutposts(save.company);
+    if (earned <= 0) return;
+    this.away = earned;
+    persist(save);
+  }
+
   private showHome(save: ReturnType<typeof newSave> | null, notice = ''): void {
     this.menuEpoch++;
     this.shipPreview?.setTexture(`ship_${save?.selectedSkin ?? 'industrial'}`);
     const actions: MenuActions = {
       playAi: () => this.begin(save ?? newSave()),
+      expedition: () => {
+        if (save) this.begin(save, 'expedition');
+      },
       newGame: () => {
         clearSave();
         const fresh = newSave();
+        // the company and any expedition under way outlive the campaign
+        if (save) {
+          fresh.company = save.company;
+          fresh.run = save.run;
+        }
         persist(fresh);
         this.begin(fresh);
       },
@@ -115,6 +141,7 @@ export class MenuScene extends Phaser.Scene {
         await authenticate(username, password, register);
         setCloudSyncHandler(syncCloudSave);
         const cloudSave = await restoreCloudSave(loadSave());
+        this.collectAway(cloudSave);
         this.showHome(cloudSave);
       },
       signOut: async () => {
@@ -140,6 +167,11 @@ export class MenuScene extends Phaser.Scene {
         persist(save);
         this.showHome(save);
       },
+      buyCompany: (id) => {
+        if (!save || !buyCompanyUpgrade(save.company, id)) return;
+        persist(save);
+        this.showHome(save);
+      },
       claimDaily: (id) => {
         if (!save) return;
         if (!claimDailyQuest(save, id)) {
@@ -151,7 +183,7 @@ export class MenuScene extends Phaser.Scene {
       },
     };
     const account = currentAccount();
-    showMenu(save, account, actions, notice);
+    showMenu(save, account, actions, notice, this.away);
     if (account) {
       const epoch = this.menuEpoch;
       void fetchPvpStats().then((stats) => {
@@ -180,10 +212,10 @@ export class MenuScene extends Phaser.Scene {
     }
   }
 
-  private begin(save: ReturnType<typeof newSave>): void {
+  private begin(save: ReturnType<typeof newSave>, mode: VoyageMode = 'campaign'): void {
     this.menuEpoch++;
     sfx.init();
-    resetSession(save);
+    resetSession(save, mode);
     closeOverlay();
     this.scene.start('Play');
   }

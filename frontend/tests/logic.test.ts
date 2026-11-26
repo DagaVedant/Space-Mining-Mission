@@ -57,6 +57,13 @@ describe('upgrades', () => {
     expect(buyUpgrade(s, 'cannon')).toBe(true);
     expect(statsFor(s.levels).damage).toBeGreaterThan(before.damage);
   });
+  it('prices the full tree close to the campaign earnings', () => {
+    let total = 0;
+    for (const u of UPGRADES) for (let level = 0; level < u.max; level++) total += upgradeCost(u.id, level);
+    const quotas = SECTORS.reduce((sum, sector) => sum + sector.goal, 0);
+    expect(total).toBeGreaterThan(quotas * 0.8);
+    expect(total).toBeLessThan(quotas);
+  });
   it('enforces max level and funds', () => {
     const s = newSave();
     expect(canBuyUpgrade(s, 'hull')).toBe(false);
@@ -172,7 +179,7 @@ describe('campaign', () => {
     expect(save?.objectiveProgress[2]).toBe(24);
     expect(save?.completedObjectives).toEqual([0, 1, 2]);
     expect(save?.selectedWeapon).toBe('lance');
-    expect(save?.v).toBe(4);
+    expect(save?.v).toBe(5);
     expect(save?.discoveries).toEqual([]);
   });
   it('records each known discovery once and unlocks Voidglass at the collection milestone', () => {
@@ -242,7 +249,7 @@ describe('save', () => {
       won: false,
     }));
     const save = loadSave();
-    expect(save?.v).toBe(4);
+    expect(save?.v).toBe(5);
     expect(save?.money).toBe(999);
     expect(save?.levels.cannon).toBe(2);
     expect(save?.selectedPilot).toBe('prospector');

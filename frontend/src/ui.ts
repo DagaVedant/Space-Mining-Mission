@@ -1,5 +1,4 @@
 import {
-  CAMPAIGN_OBJECTIVES,
   DISCOVERY_SITES,
   ORES,
   ORE_IDS,
@@ -16,7 +15,7 @@ import {
 } from './data';
 import { sfx } from './audio';
 import { oreIcon } from './oreart';
-import { priceOf, targetMult, type MarketState } from './market';
+import type { MarketState } from './market';
 import type { Account } from './cloud';
 import { loadSettings, saveSettings, type ControlAction } from './settings';
 import {
@@ -32,9 +31,18 @@ import {
   type SaveData,
   type ShipStats,
   utcDate,
-  campaignObjectiveComplete,
-  objectiveProgress,
+  expeditionsUnlocked,
 } from './progress';
+import {
+  COMPANY_UPGRADES,
+  MILESTONES,
+  companyCost,
+  type CompanyState,
+  type CompanyUpgradeId,
+  type RunReport,
+} from './company';
+import { PERKS, claimsFor, type PerkDef, type PerkId, type RunEnd } from './run';
+import type { VoyageInfo } from './voyage';
 
 const root = (): HTMLElement => document.getElementById('ui') as HTMLElement;
 const el = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
@@ -51,20 +59,23 @@ export interface HudState {
   cargo: Cargo;
   cargoMax: number;
   money: number;
-  sector: number;
+  bossName: string | null;
+  hasGate: boolean;
   earned: number;
   goal: number;
   contracts: Contract[];
   clock: number;
   market: MarketState;
-  boss: { hp: number; max: number } | null;
+  boss: { hp: number; max: number; name: string } | null;
   mission: { description: string; progress: number; target: number; complete: boolean };
   discoveries: number;
   discoveryTotal: number;
+  pulse: { key: string; wait: number };
 }
 
 export interface ShopApi {
   save: SaveData;
+  info(): VoyageInfo;
   market: MarketState;
   cargo(): Cargo;
   hull(): number;
@@ -104,6 +115,9 @@ let shopApi: ShopApi | null = null;
 let shopTimer = 0;
 let pressed = false;
 let toastCount = 0;
+let mapKey = 'N';
+let shopHtml = '';
+let shopTab = '';
 
 // 7x6 / 7x7 pixel icons, drawn as crisp SVG rects like inventory sprites
 const HEART = ['.XX.XX.', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '..XXX..', '...X...'];
@@ -149,36 +163,77 @@ function buildHud(): void {
   const h = document.createElement('div');
   h.id = 'hud';
   h.className = 'hidden';
-  const slots = Array.from({ length: 9 }, (_, i) => {
-    const o = ORE_IDS[i];
-    if (!o) return '<div class="slot"></div>';
-    return `<div class="slot" id="slot-${o}" title="${ORES[o].name}">${oreIcon(o, 'ic')}<b class="n"></b></div>`;
-  }).join('');
+  const slots = ORE_IDS.map(
+    (o) => `<div class="slot" id="slot-${o}" title="${ORES[o].name}">${oreIcon(o, 'ic')}<b class="n"></b></div>`,
+  ).join('');
   h.innerHTML = `
     <div id="hurt"></div>
     <div id="flare"></div>
-    <div id="bar" class="plate">
-      <div class="cash"><span id="money"></span></div>
-      <div id="sector-name"></div>
-      <div id="goal-text" class="dimt"></div>
-        <div id="mission-text" role="status" aria-live="polite"></div>
-      <div id="v-cargo" class="dimt"></div>
+    <div id="left">
+      <div id="bar" class="plate">
+        <div class="cash"><span id="money"></span></div>
+        <div id="goal-text" class="dimt"></div>
+        <div id="next-text" role="status" aria-live="polite"></div>
+      </div>
+      <div id="toasts" aria-live="polite"></div>
     </div>
-    <div class="win contracts"><div class="wt">CONTRACTS</div><div class="wb" id="contracts"></div></div>
-    <div id="bossbar" class="hidden"><span>DREADNOUGHT</span><div class="track"><i id="b-boss"></i></div></div>
+    <div id="right">
+      <div id="contracts" class="plate hidden" aria-label="Active contracts"></div>
+      <div id="mapwin" data-size="small">
+        <div class="maptools">
+          <button id="map-size" type="button" aria-label="Change map size">MAP <span id="map-key" class="keyhint"></span></button>
+          <button id="discovery-log" type="button" aria-label="Open discovery log">LOG <span id="discovery-count">0/0</span></button>
+        </div>
+        <canvas id="minimap" width="180" height="180"></canvas>
+      </div>
+    </div>
+    <div id="bossbar" class="hidden"><span id="boss-name"></span><div class="track"><i id="b-boss"></i></div></div>
     <div id="banner" class="hidden"></div>
-    <div id="toasts"></div>
     <div id="hint" class="hidden"></div>
-    <div id="pricebar" class="plate"><div class="pl">PRICES</div><div id="ticker"></div></div>
     <div class="keys" id="keys">WASD move | Shift turbo | Space or click fire (aim with mouse) | E dock / gate | Esc pause | M mute</div>
-    <div class="win mapwin"><div class="wt"><span>MAP</span><button id="discovery-log" type="button" aria-label="Open discovery log">LOG <span id="discovery-count">0/0</span></button></div><canvas id="minimap" width="180" height="180"></canvas><div class="map-legend">White: ship · Orange: gate · Purple: gravity well · Blue: planet · Red: pirate · Gold: discovery site</div></div>
     <div id="dock">
       <div class="vitals"><div id="hearts" class="icons"></div><div id="bolts" class="icons"></div></div>
       <div id="shield-bar" class="xp shield hidden"><i id="b-shield"></i></div>
       <div class="xp" title="Sector quota"><i id="b-goal"></i></div>
-      <div id="hotbar">${slots}</div>
+      <div class="hold"><span id="v-pulse"></span><div id="hotbar">${slots}</div><span id="v-cargo"></span></div>
     </div>`;
   root().appendChild(h);
+  el('map-size').addEventListener('click', (event) => {
+    (event.currentTarget as HTMLElement).blur(); // so Space keeps firing instead of re-pressing it
+    hud.cycleMap();
+  });
+  setMapSize(readMapSize());
+}
+
+const MAP_SIZES = ['small', 'large', 'hidden'] as const;
+type MapSize = (typeof MAP_SIZES)[number];
+const MAP_KEY = 'asteroid-breaker-map-size';
+
+function readMapSize(): MapSize {
+  try {
+    const stored = localStorage.getItem(MAP_KEY);
+    return MAP_SIZES.find((size) => size === stored) ?? 'small';
+  } catch {
+    return 'small';
+  }
+}
+
+function setMapSize(size: MapSize): void {
+  el('mapwin').dataset.size = size;
+  try {
+    localStorage.setItem(MAP_KEY, size);
+  } catch {
+    // the size just resets next visit
+  }
+}
+
+/** The one thing to do next. */
+function nextStep(s: HudState): string {
+  const { mission } = s;
+  if (!mission.complete) return `Next: ${mission.description} (${mission.progress}/${mission.target})`;
+  if (s.earned < s.goal) return `Next: earn ${money(s.goal - s.earned)} more`;
+  if (s.bossName) return `Next: destroy the ${s.bossName}`;
+  return s.hasGate ? 'Next: fly to the warp gate' : 'Free play: keep mining';
 }
 
 export const hud = {
@@ -190,6 +245,7 @@ export const hud = {
     el('banner').classList.add('hidden');
     const settings = loadSettings();
     const keyLabel = (key: string): string => KEY_LABELS[key] ?? key;
+    mapKey = settings.bindings.map;
     setText(
       'keys',
       `${keyLabel(settings.bindings.up)} ${keyLabel(settings.bindings.left)} ${keyLabel(settings.bindings.down)} ${keyLabel(settings.bindings.right)} move | ${keyLabel(settings.bindings.boost)} boost | ${keyLabel(settings.bindings.fire)} fire | ${keyLabel(settings.bindings.interact)} dock | ${keyLabel(settings.bindings.pause)} pause`,
@@ -199,6 +255,11 @@ export const hud = {
   hide(): void {
     if (!hudBuilt) return;
     el('hud').classList.add('hidden');
+  },
+  cycleMap(): void {
+    if (!hudBuilt) return;
+    const now = MAP_SIZES.indexOf(el('mapwin').dataset.size as MapSize);
+    setMapSize(MAP_SIZES[(now + 1) % MAP_SIZES.length]);
   },
   minimap(): CanvasRenderingContext2D {
     return (el('minimap') as HTMLCanvasElement).getContext('2d') as CanvasRenderingContext2D;
@@ -221,16 +282,19 @@ export const hud = {
       setText(`slot-${o}:n`, s.cargo[o] > 0 ? String(s.cargo[o]) : '', slot.querySelector('.n') as HTMLElement);
     }
     setText('money', money(s.money));
-    const sec = SECTORS[s.sector];
-    setText('sector-name', `Sector ${s.sector + 1}: ${sec.name}`);
+    setText('map-key', KEY_LABELS[mapKey] ?? mapKey);
     setWidth('b-goal', (s.earned / s.goal) * 100);
     el('shield-bar').classList.toggle('hidden', s.shieldMax <= 0);
     if (s.shieldMax > 0) setWidth('b-shield', (s.shield / s.shieldMax) * 100);
     setText('goal-text', s.earned >= s.goal ? 'Quota met' : `Quota ${money(s.earned)} / ${money(s.goal)}`);
-    setText('mission-text', `${s.mission.complete ? '✓' : 'MISSION'} ${s.mission.description} · ${s.mission.progress}/${s.mission.target}`);
+    setText('next-text', nextStep(s));
     setText('discovery-count', `${s.discoveries}/${s.discoveryTotal}`);
-    setText('v-cargo', `Hold ${used} / ${s.cargoMax}`);
-    const cs = s.contracts
+    setText('v-cargo', `${used}/${s.cargoMax}`);
+    el('v-cargo').classList.toggle('full', used >= s.cargoMax);
+    const ready = s.pulse.wait <= 0;
+    setText('v-pulse', ready ? `${KEY_LABELS[s.pulse.key] ?? s.pulse.key} Pulse` : `Pulse ${Math.ceil(s.pulse.wait)}s`);
+    el('v-pulse').classList.toggle('cooling', !ready);
+    const csh = s.contracts
       .map((c) => {
         const left = Math.max(0, Math.round(c.deadline - s.clock));
         const m = Math.floor(left / 60);
@@ -238,28 +302,15 @@ export const hud = {
         return `<div class="ct"><b style="color:${ORES[c.ore].css}">${c.qty} ${ORES[c.ore].name}</b><span>${money(c.reward)}</span><em>${m}:${sc}</em></div>`;
       })
       .join('');
-    const csh = cs || '<div class="empty">No active contracts. Pick some up at the station.</div>';
     if (cache.get('ct') !== csh) {
       cache.set('ct', csh);
       el('contracts').innerHTML = csh;
-    }
-    const tk = ORE_IDS.map((o) => {
-      const p = s.market.prices[o];
-      const pv = s.market.prev[o];
-      const ch = ((p - pv) / pv) * 100;
-      const cls = ch > 0.4 ? 'up' : ch < -0.4 ? 'down' : '';
-      const sign = ch > 0.4 ? '+' : '';
-      const ev = targetMult(s.market, o) !== 1 ? ' ev' : '';
-      return `<div class="tk${ev}">${oreIcon(o)}<span>${ORES[o].name}</span><b>${money(priceOf(s.market, o))}</b><em class="${cls}">${sign}${ch.toFixed(0)}%</em></div>`;
-    }).join('');
-    const tkFull = tk + (s.market.events.length ? `<div class="evt">${s.market.events.map((e) => e.label).join(' / ')}</div>` : '');
-    if (cache.get('tk') !== tkFull) {
-      cache.set('tk', tkFull);
-      el('ticker').innerHTML = tkFull;
+      el('contracts').classList.toggle('hidden', !csh);
     }
     const bb = el('bossbar');
     if (s.boss) {
       bb.classList.remove('hidden');
+      setText('boss-name', s.boss.name.toUpperCase());
       setWidth('b-boss', (s.boss.hp / s.boss.max) * 100);
     } else bb.classList.add('hidden');
   },
@@ -271,7 +322,7 @@ export const hud = {
     t.textContent = msg;
     t.dataset.n = String(++toastCount);
     box.appendChild(t);
-    while (box.children.length > 5) box.removeChild(box.firstChild as Node);
+    while (box.children.length > 3) box.removeChild(box.firstChild as Node);
     window.setTimeout(() => t.classList.add('out'), 4200);
     window.setTimeout(() => t.remove(), 4800);
   },
@@ -327,7 +378,7 @@ export function showOverlay(title: string, body: string, buttons: OverlayButton[
   closeOverlay();
   const o = document.createElement('div');
   o.className = 'overlay';
-  o.innerHTML = `<div class="win card"><div class="wt">${title}</div><div class="wb"><p>${body}</p>${extra}<div class="btns"></div></div></div>`;
+  o.innerHTML = `<div class="win card" role="dialog" aria-modal="true" aria-label="${title}"><div class="wt">${title}</div><div class="wb"><p>${body}</p>${extra}<div class="btns"></div></div></div>`;
   const box = o.querySelector('.btns') as HTMLElement;
   for (const b of buttons) {
     const btn = document.createElement('button');
@@ -341,6 +392,66 @@ export function showOverlay(title: string, body: string, buttons: OverlayButton[
   (box.querySelector('button.primary') as HTMLElement | null)?.focus();
 }
 
+export function showPerkPick(opts: {
+  depth: number;
+  offer: PerkDef[];
+  rerolls: number;
+  onPick: (id: PerkId) => void;
+  onReroll: () => void;
+  onMenu: () => void;
+}): void {
+  const choices = opts.offer
+    .map((perk) => `<button type="button" data-perk="${perk.id}"><b>${perk.name}</b><span>${perk.desc}</span></button>`)
+    .join('');
+  const buttons: Parameters<typeof showOverlay>[2] = [];
+  if (opts.rerolls > 0) buttons.push({ label: `Reroll (${opts.rerolls} left)`, onClick: opts.onReroll });
+  buttons.push({ label: 'Save and quit', onClick: opts.onMenu });
+  showOverlay(`DEPTH ${opts.depth} CLEARED`, 'Pick one upgrade. It lasts for the rest of this expedition.', buttons, `<div class="perks">${choices}</div>`);
+  const nodes = document.querySelectorAll<HTMLButtonElement>('.overlay [data-perk]');
+  nodes.forEach((node) => node.addEventListener('click', () => opts.onPick(node.dataset.perk as PerkId)));
+  nodes[0]?.focus();
+}
+
+export function showGate(opts: {
+  depth: number;
+  earned: number;
+  claims: number;
+  lostClaims: number;
+  hull: number;
+  hullMax: number;
+  onPush: () => void;
+  onExtract: () => void;
+  onMenu: () => void;
+}): void {
+  showOverlay(
+    'PUSH ON OR EXTRACT',
+    `Extract to bank <b>${opts.claims} Claims</b> and end the expedition.<br>
+     Push on to depth ${opts.depth + 1} for more. If the ship is lost you bank only ${opts.lostClaims} of what you have now.`,
+    [
+      { label: `Push on to depth ${opts.depth + 1}`, primary: true, onClick: opts.onPush },
+      { label: `Extract (+${opts.claims} Claims)`, onClick: opts.onExtract },
+      { label: 'Save and quit', onClick: opts.onMenu },
+    ],
+    `<dl class="tally"><dt>Earned this expedition</dt><dd>${money(opts.earned)}</dd><dt>Hull</dt><dd>${opts.hull} / ${opts.hullMax}</dd></dl>`,
+  );
+}
+
+export function showRunEnd(opts: { how: RunEnd; depth: number; report: RunReport; onAgain: () => void; onMenu: () => void }): void {
+  const extra = opts.report.milestones.map((m) => `<dt>${m.name}</dt><dd>+${m.reward}</dd>`).join('');
+  const depths = `${opts.depth} depth${opts.depth === 1 ? '' : 's'}`;
+  showOverlay(
+    opts.how === 'extract' ? 'EXTRACTED' : 'SHIP LOST',
+    opts.how === 'extract'
+      ? `You brought it home after clearing ${depths}.`
+      : `The expedition ends after ${depths}. Your campaign is untouched.`,
+    [
+      { label: 'New expedition', primary: true, onClick: opts.onAgain },
+      { label: 'Main menu', onClick: opts.onMenu },
+    ],
+    `<dl class="tally"><dt>Claims banked</dt><dd>+${opts.report.claims}</dd>${extra}</dl>`,
+  );
+}
+
 export function showDiscoveryLog(save: SaveData, onClose: () => void): void {
   const rows = DISCOVERY_SITES.map((site) => {
     const found = save.discoveries.includes(site.id);
@@ -351,7 +462,8 @@ export function showDiscoveryLog(save: SaveData, onClose: () => void): void {
   }).join('');
   showOverlay(
     'DISCOVERY LOG',
-    `${save.discoveries.length} / ${DISCOVERY_SITES.length} sites recovered. Sites are optional and do not block sector gates.`,
+    `${save.discoveries.length} / ${DISCOVERY_SITES.length} sites recovered. Sites are optional and do not block sector gates.<br>
+     Map: white ship, orange station and gate, purple gravity well, blue planet, red pirate, gold salvage site.`,
     [{ label: 'Back to flight', primary: true, onClick: onClose }],
     `<ul class="discovery-log">${rows}</ul>`,
   );
@@ -374,8 +486,10 @@ const CONTROL_LABELS: Record<ControlAction, string> = {
   interact: 'Dock / interact',
   pause: 'Pause',
   mute: 'Mute audio',
+  map: 'Map size',
+  pulse: 'Pulse',
 };
-const REBINDABLE_KEYS = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'SPACE', 'SHIFT', 'E', 'ESC', 'M'];
+const REBINDABLE_KEYS = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'SPACE', 'SHIFT', 'E', 'ESC', 'M', 'N', 'Q', 'F'];
 const KEY_LABELS: Record<string, string> = {
   UP: 'Arrow Up',
   DOWN: 'Arrow Down',
@@ -467,6 +581,7 @@ export function showSettings(onClose: () => void = closeOverlay): void {
 
 export interface MenuActions {
   playAi: () => void;
+  expedition: () => void;
   newGame: () => void;
   pvp: (ranked: boolean) => void;
   authenticate: (username: string, password: string, register: boolean) => Promise<void>;
@@ -475,12 +590,68 @@ export interface MenuActions {
   selectSkin: (skin: ShipSkinId) => void;
   selectWeapon: (weapon: WeaponId) => void;
   claimDaily: (id: string) => void;
+  buyCompany: (id: CompanyUpgradeId) => void;
 }
 
-type MenuView = 'home' | 'loadout' | 'contracts' | 'account' | 'how';
+type MenuView = 'home' | 'expedition' | 'company' | 'loadout' | 'contracts' | 'account' | 'how';
 
 // kept outside showMenu so a redraw (picking a pilot, claiming a contract) stays on the same page
 let menuView: MenuView = 'home';
+// so buying again does not mean finding the same button again
+let lastBuy = '';
+
+const whole = (n: number): string => Math.floor(n).toLocaleString('en-US');
+const tally = (rows: [string, string][]): string =>
+  `<dl class="tally">${rows.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('')}</dl>`;
+
+function expeditionPage(save: SaveData): string {
+  const { run, company } = save;
+  const perks = run ? PERKS.filter((perk) => run.perks.includes(perk.id)) : [];
+  const state = run
+    ? tally([
+        ['Depth', String(run.depth + 1)],
+        ['Credits', money(run.money)],
+        ['Claims if you extract now', whole(claimsFor(run, 'extract'))],
+      ]) +
+      (perks.length
+        ? `<div class="sub-h">Perks held</div><ul class="how">${perks.map((perk) => `<li><b>${perk.name}</b> - ${perk.desc}</li>`).join('')}</ul>`
+        : '')
+    : tally([
+        ['Deepest depth cleared', String(company.stats.bestDepth)],
+        ['Claims', whole(company.claims)],
+      ]);
+  return `<p class="menu-note">Each depth is deeper and richer. Clear it, pick a perk, then push on or extract. Lose the ship and you bank only 40%. Your campaign is not touched.</p>
+    ${state}
+    <button type="button" class="primary wide" data-expedition>${run ? 'Resume expedition' : 'Start expedition'}</button>`;
+}
+
+function companyPage(company: CompanyState, away: number): string {
+  const upgrades = COMPANY_UPGRADES.map((upgrade) => {
+    const level = company.upgrades[upgrade.id];
+    const cost = companyCost(upgrade.id, level);
+    return `<div class="daily-quest"><span>${upgrade.name} <small>level ${level}</small></span><small>${upgrade.desc}</small>
+      <button type="button" data-buy="${upgrade.id}" aria-label="Buy ${upgrade.name} for ${cost} Claims" ${company.claims >= cost ? '' : 'disabled'}>${whole(cost)}</button></div>`;
+  }).join('');
+  const { stats } = company;
+  const records = tally([
+    ['Expeditions flown', whole(stats.runs)],
+    ['Brought home', whole(stats.extracts)],
+    ['Deepest depth cleared', whole(stats.bestDepth)],
+    ['Longest streak', whole(stats.bestStreak)],
+  ]);
+  const milestones = tally(
+    MILESTONES.map((m) => {
+      const done = company.milestones.includes(m.id);
+      const at = `${whole(Math.min(stats[m.stat], m.target))}/${m.target}`;
+      return [done ? m.name : `${m.name} <small>${at}</small>`, done ? 'Done' : `+${m.reward}`];
+    }),
+  );
+  return `${away > 0 ? `<p class="menu-note" role="status">While you were gone, your outposts earned <b>${whole(away)} Claims</b>.</p>` : ''}
+    <p class="claims">${whole(company.claims)} Claims</p>
+    <div class="daily-panel">${upgrades}</div>
+    <div class="sub-h">Milestones, paid when a run ends</div>${milestones}
+    <div class="sub-h">Records</div>${records}`;
+}
 
 function menuPage(view: MenuView, title: string, body: string): string {
   return `<section data-view="${view}" hidden>
@@ -489,8 +660,11 @@ function menuPage(view: MenuView, title: string, body: string): string {
   </section>`;
 }
 
-export function showMenu(save: SaveData | null, account: Account | null, actions: MenuActions, notice = ''): void {
+export function showMenu(save: SaveData | null, account: Account | null, actions: MenuActions, notice = '', away = 0): void {
+  const scrolled = document.querySelector('.menu-body')?.scrollTop ?? 0;
   closeOverlay();
+  const expeditions = save !== null && expeditionsUnlocked(save);
+  if (!expeditions && (menuView === 'expedition' || menuView === 'company')) menuView = 'home';
   const o = document.createElement('div');
   o.className = 'menu';
   const upgrades = save ? Object.values(save.levels).reduce((a, b) => a + b, 0) : 0;
@@ -533,6 +707,10 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
     <li>Move, aim and fire with keyboard/mouse or on-screen touch controls</li>
     <li>Campaign sectors require both the quota and the displayed mission objective to open the next gate</li>
     <li><b>E</b> dock at the station to sell, repair and upgrade</li>
+    <li><b>Q</b> pulse clears enemy shots and shoves rocks, then recharges</li>
+    <li><b>N</b> cycles the map: small, large, hidden</li>
+    <li>Break rocks in quick succession to build a streak that drops extra ore</li>
+    <li>Expeditions open after sector 2. Claims from them buy permanent Company upgrades</li>
     <li>Daily contracts reward credits and help unlock pilots and ship skins</li>
     <li>Play against AI offline, or sign in to join live PvP battles</li>
   </ul>`;
@@ -541,13 +719,17 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
       <div class="wb">
         <section data-view="home">
           <h1>ASTEROID BREAKER</h1>
-          <p class="sub">Mine the belt. Build your ship. Take the fight online.</p>
+          ${save ? '' : '<p class="sub">Mine the belt. Build your ship. Take the fight online.</p>'}
           <div class="menu-play"></div>
           ${info}
+          ${save && !expeditions ? '<p class="save">Expeditions open after sector 2.</p>' : ''}
+          ${away > 0 ? `<p class="save" role="status">Outposts earned ${whole(away)} Claims.</p>` : ''}
           <div class="menu-online"></div>
           <p class="menu-status" role="status"></p>
           <nav class="menu-nav" aria-label="Menu"></nav>
         </section>
+        ${save && expeditions ? menuPage('expedition', 'Expedition', expeditionPage(save)) : ''}
+        ${save && expeditions ? menuPage('company', 'Company', companyPage(save.company, away)) : ''}
         ${menuPage('loadout', 'Loadout', loadout)}
         ${menuPage('contracts', 'Daily contracts', dailyPanel)}
         ${menuPage('account', 'Account', accountPanel)}
@@ -567,12 +749,18 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
     const target =
       menuView === 'home'
         ? find(`.menu-nav [data-open="${from}"]`) ?? find('.menu-play button')
-        : find(`${page} input`) ?? find(`${page} button`);
+        : find(`${page} [data-buy="${lastBuy}"]:not(:disabled)`) ??
+          find(`${page} input`) ??
+          find(`${page} button.primary`) ??
+          find(`${page} button`);
     target?.focus();
   };
   const open = (view: MenuView): void => {
     const from = menuView;
+    lastBuy = '';
     showView(view);
+    const body = o.querySelector('.menu-body');
+    if (body) body.scrollTop = 0;
     focusView(from);
   };
 
@@ -589,6 +777,10 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
   };
 
   button('.menu-play', save ? 'Continue campaign' : 'Play against AI', actions.playAi).className = 'primary';
+  if (save && expeditions) {
+    button('.menu-play', save.run ? `Resume expedition (depth ${save.run.depth + 1})` : 'Expedition', () => open('expedition')).dataset.open =
+      'expedition';
+  }
 
   if (account) {
     const pvpMode = document.createElement('select');
@@ -605,10 +797,11 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
   }
 
   const ready = o.querySelectorAll('[data-claim]:not(:disabled)').length;
+  if (expeditions) link('Company', 'company');
   link('Loadout', 'loadout');
   link(ready ? `Contracts (${ready} ready)` : 'Contracts', 'contracts');
   link('Account', 'account');
-  button('.menu-nav', 'Settings', () => showSettings(() => showMenu(save, account, actions, notice)));
+  button('.menu-nav', 'Settings', () => showSettings(() => showMenu(save, account, actions, notice, away)));
   link('How to play', 'how');
   if (save) {
     button('.menu-nav', 'New campaign', () => {
@@ -634,6 +827,13 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
   weapon.addEventListener('change', () => actions.selectWeapon(weapon.value as WeaponId));
   o.querySelectorAll<HTMLButtonElement>('[data-claim]').forEach((button) => {
     button.addEventListener('click', () => actions.claimDaily(button.dataset.claim ?? ''));
+  });
+  o.querySelector('[data-expedition]')?.addEventListener('click', actions.expedition);
+  o.querySelectorAll<HTMLButtonElement>('[data-buy]').forEach((node) => {
+    node.addEventListener('click', () => {
+      lastBuy = node.dataset.buy ?? '';
+      actions.buyCompany(lastBuy as CompanyUpgradeId);
+    });
   });
   o.querySelector('[data-account="logout"]')?.addEventListener('click', () => {
     void actions.signOut().catch((error: unknown) => setAccountStatus(o, error));
@@ -661,6 +861,8 @@ export function showMenu(save: SaveData | null, account: Account | null, actions
   }
   showView(menuView);
   focusView();
+  const body = o.querySelector('.menu-body');
+  if (body) body.scrollTop = scrolled;
 }
 
 function dailyQuestRow(quest: DailyQuest, save: SaveData): string {
@@ -703,8 +905,8 @@ function renderShop(): void {
   const hull = api.hull();
   const fuel = api.fuel();
   const clock = api.clock();
-  const sector = save.sector;
-  const sec = SECTORS[sector];
+  const info = api.info();
+  const sector = Math.min(info.threat, 8);
   const act = api.active();
   const offers = api.offers();
 
@@ -789,19 +991,17 @@ function renderShop(): void {
       <p class="note">Contracts are filled automatically when you dock with enough ore. Late contracts pay nothing.</p>`;
   }
 
-  const quotaReached = save.sectorEarned >= sec.goal;
-  const mission = CAMPAIGN_OBJECTIVES[sector];
-  const missionDone = campaignObjectiveComplete(save);
-  const pct = Math.min(100, (save.sectorEarned / sec.goal) * 100);
+  const { mission } = info;
+  const pct = Math.min(100, (info.earned / info.goal) * 100);
   const gate = api.gateReady()
     ? 'Warp gate open'
-    : sec.boss
-      ? 'Meet quota and mission, then defeat the Dreadnought'
-      : !quotaReached
-        ? `Quota: ${money(sec.goal - save.sectorEarned)} more`
-        : `Mission: ${mission.description} (${objectiveProgress(save)}/${mission.target})`;
-  box.innerHTML = `
-    <div class="wt"><span>HOME STATION - ${sec.name.toUpperCase()}</span><button class="x" data-act="launch" title="Launch (E)">X</button></div>
+    : info.bossName
+      ? `Meet quota and mission, then defeat the ${info.bossName}`
+      : info.earned < info.goal
+        ? `Quota: ${money(info.goal - info.earned)} more`
+        : `Mission: ${mission.description} (${mission.progress}/${mission.target})`;
+  const html = `
+    <div class="wt"><span>HOME STATION - ${info.name.toUpperCase()}</span><button class="x" data-act="launch" title="Launch (E)">X</button></div>
     <div class="wb">
       <div class="shop-top">
         <div class="tabs">${TABS.map((t) => `<button class="tab ${t.id === tab ? 'on' : ''}" data-act="tab" data-id="${t.id}">${t.label}</button>`).join('')}</div>
@@ -809,10 +1009,21 @@ function renderShop(): void {
       </div>
       <div class="tabbody">${body}</div>
       <div class="statusbar">
-        <div class="quota"><span>Sector quota</span><div class="track goal"><i style="width:${pct}%"></i></div><span>${money(save.sectorEarned)} / ${money(sec.goal)}</span><span class="gate">${missionDone ? 'Mission complete · ' : ''}${gate}</span></div>
+        <div class="quota"><span>${info.quotaLabel}</span><div class="track goal"><i style="width:${pct}%"></i></div><span>${money(info.earned)} / ${money(info.goal)}</span><span class="gate">${mission.complete ? 'Mission complete · ' : ''}${gate}</span></div>
         <button class="primary" data-act="launch">Launch (E)</button>
       </div>
     </div>`;
+  // redrawn every second: replacing identical markup would still drop scroll and focus
+  if (box.firstElementChild && html === shopHtml) return;
+  const scroll = shopTab === tab ? (box.querySelector('.tabbody')?.scrollTop ?? 0) : 0;
+  const focused = box.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
+  const focusKey = focused?.dataset.act ? `[data-act="${focused.dataset.act}"]${focused.dataset.id ? `[data-id="${focused.dataset.id}"]` : ''}` : '';
+  shopHtml = html;
+  shopTab = tab;
+  box.innerHTML = html;
+  const body_ = box.querySelector('.tabbody');
+  if (body_) body_.scrollTop = scroll;
+  if (focusKey) box.querySelector<HTMLElement>(focusKey)?.focus({ preventScroll: true });
 }
 
 export function openShop(api: ShopApi): void {

@@ -264,11 +264,15 @@ app.post('/api/auth/logout', requireUser, async (req, res) => {
 
 app.get('/api/me', requireUser, (_req, res) => res.json({ user: res.locals.user as User }));
 
+function isPlainObject(value: unknown): boolean {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 function isSavePayload(value: unknown): value is SavePayload {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const save = value as Record<string, unknown>;
   return (
-    (save.v === 1 || save.v === 2 || save.v === 3 || save.v === 4) &&
+    (save.v === 1 || save.v === 2 || save.v === 3 || save.v === 4 || save.v === 5) &&
     typeof save.money === 'number' &&
     Number.isFinite(save.money) &&
     save.money >= 0 &&
@@ -286,10 +290,12 @@ function isSavePayload(value: unknown): value is SavePayload {
     typeof save.levels === 'object' &&
     !Array.isArray(save.levels) &&
     typeof save.won === 'boolean' &&
-    (save.v !== 4 ||
+    ((save.v !== 4 && save.v !== 5) ||
       (Array.isArray(save.discoveries) &&
         save.discoveries.length <= 100 &&
-        save.discoveries.every((id) => typeof id === 'string' && /^[a-z0-9-]{1,48}$/.test(id))))
+        save.discoveries.every((id) => typeof id === 'string' && /^[a-z0-9-]{1,48}$/.test(id)))) &&
+    // the client repairs the contents, so only the shapes are checked here
+    (save.v !== 5 || (isPlainObject(save.company) && (save.run === null || isPlainObject(save.run))))
   );
 }
 

@@ -39,25 +39,28 @@ export interface UpgradeDef {
   desc: string;
   max: number;
   baseCost: number;
-  growth: number;
 }
 
+// each level costs this many times the one before: cheap to start, and maxing out
+// everything takes about as long as the whole campaign
+export const UPGRADE_GROWTH = 3;
+
 export const UPGRADES: UpgradeDef[] = [
-  { id: 'cannon', name: 'Cannon Damage', desc: 'Harder-hitting mining shots.', max: 5, baseCost: 90, growth: 1.75 },
-  { id: 'rate', name: 'Fire Rate', desc: 'Shoot faster.', max: 5, baseCost: 80, growth: 1.7 },
-  { id: 'hull', name: 'Hull Plating', desc: 'More hull to survive hits.', max: 5, baseCost: 110, growth: 1.7 },
-  { id: 'cargo', name: 'Cargo Hold', desc: 'Carry more ore per trip.', max: 5, baseCost: 120, growth: 1.8 },
-  { id: 'thrust', name: 'Thrusters', desc: 'Faster acceleration and top speed.', max: 5, baseCost: 100, growth: 1.7 },
-  { id: 'tank', name: 'Fuel Tank', desc: 'Bigger tank, longer trips.', max: 5, baseCost: 70, growth: 1.6 },
-  { id: 'magnet', name: 'Ore Magnet', desc: 'Pull ore from farther away.', max: 5, baseCost: 85, growth: 1.65 },
-  { id: 'drones', name: 'Drone Bay', desc: 'Each level adds an auto-mining drone (upkeep applies).', max: 5, baseCost: 260, growth: 1.9 },
-  { id: 'yield', name: 'Drone Yield', desc: 'Drones hit harder and earn more.', max: 5, baseCost: 200, growth: 1.8 },
-  { id: 'turret', name: 'Station Turret', desc: 'Defend the station and drones from pirates.', max: 5, baseCost: 150, growth: 1.75 },
-  { id: 'shield', name: 'Shield Generator', desc: 'Absorb damage and recharge while out of combat.', max: 5, baseCost: 180, growth: 1.8 },
-  { id: 'scanner', name: 'Ore Scanner', desc: 'Find ore from farther away.', max: 5, baseCost: 130, growth: 1.7 },
-  { id: 'refinery', name: 'Field Refinery', desc: 'Earn more credits when selling ore.', max: 5, baseCost: 220, growth: 1.85 },
-  { id: 'repair', name: 'Auto-Repair Nanites', desc: 'Regenerate hull when you are not taking damage.', max: 5, baseCost: 240, growth: 1.85 },
-  { id: 'sprint', name: 'Sprint Capacitors', desc: 'Recharge fuel while coasting and reduce sprint fuel use.', max: 5, baseCost: 180, growth: 1.75 },
+  { id: 'cannon', name: 'Cannon Damage', desc: 'Harder-hitting mining shots.', max: 5, baseCost: 90 },
+  { id: 'rate', name: 'Fire Rate', desc: 'Shoot faster.', max: 5, baseCost: 80 },
+  { id: 'hull', name: 'Hull Plating', desc: 'More hull to survive hits.', max: 5, baseCost: 110 },
+  { id: 'cargo', name: 'Cargo Hold', desc: 'Carry more ore per trip.', max: 5, baseCost: 120 },
+  { id: 'thrust', name: 'Thrusters', desc: 'Faster acceleration and top speed.', max: 5, baseCost: 100 },
+  { id: 'tank', name: 'Fuel Tank', desc: 'Bigger tank, longer trips.', max: 5, baseCost: 70 },
+  { id: 'magnet', name: 'Ore Magnet', desc: 'Pull ore from farther away.', max: 5, baseCost: 85 },
+  { id: 'drones', name: 'Drone Bay', desc: 'Each level adds an auto-mining drone (upkeep applies).', max: 5, baseCost: 260 },
+  { id: 'yield', name: 'Drone Yield', desc: 'Drones hit harder and earn more.', max: 5, baseCost: 200 },
+  { id: 'turret', name: 'Station Turret', desc: 'Defend the station and drones from pirates.', max: 5, baseCost: 150 },
+  { id: 'shield', name: 'Shield Generator', desc: 'Absorb damage and recharge while out of combat.', max: 5, baseCost: 180 },
+  { id: 'scanner', name: 'Ore Scanner', desc: 'Find ore from farther away.', max: 5, baseCost: 130 },
+  { id: 'refinery', name: 'Field Refinery', desc: 'Earn more credits when selling ore.', max: 5, baseCost: 220 },
+  { id: 'repair', name: 'Auto-Repair Nanites', desc: 'Regenerate hull when you are not taking damage.', max: 5, baseCost: 240 },
+  { id: 'sprint', name: 'Sprint Capacitors', desc: 'Recharge fuel while coasting and reduce sprint fuel use.', max: 5, baseCost: 180 },
 ];
 
 export type PilotId = 'prospector' | 'vanguard' | 'scout';
@@ -102,15 +105,19 @@ export interface WeaponDef {
   fireDelayMultiplier: number;
   projectiles: number;
   spread: number;
+  /** how many extra targets a shot passes through */
+  pierce: number;
+  /** speed added to what it hits */
+  knockback: number;
 }
 
 export const WEAPONS: WeaponDef[] = [
-  { id: 'miner', name: 'Mining Blaster', description: 'Balanced damage and firing speed.', damageMultiplier: 1, fireDelayMultiplier: 1, projectiles: 1, spread: 0 },
-  { id: 'scatter', name: 'Scatter Cannon', description: 'Three light shots fan out at close range.', damageMultiplier: 0.48, fireDelayMultiplier: 1.35, projectiles: 3, spread: 0.16 },
-  { id: 'lance', name: 'Pulse Lance', description: 'A heavy, precise shot with slower follow-up.', damageMultiplier: 2.2, fireDelayMultiplier: 1.7, projectiles: 1, spread: 0 },
+  { id: 'miner', name: 'Mining Blaster', description: 'Balanced damage and firing speed.', damageMultiplier: 1, fireDelayMultiplier: 1, projectiles: 1, spread: 0, pierce: 0, knockback: 0 },
+  { id: 'scatter', name: 'Scatter Cannon', description: 'Three light shots that shove what they hit.', damageMultiplier: 0.48, fireDelayMultiplier: 1.35, projectiles: 3, spread: 0.16, pierce: 0, knockback: 90 },
+  { id: 'lance', name: 'Pulse Lance', description: 'A heavy, slow shot that pierces two targets.', damageMultiplier: 2.2, fireDelayMultiplier: 1.7, projectiles: 1, spread: 0, pierce: 2, knockback: 0 },
 ];
 
-export type ObjectiveMetric = 'ore' | 'pirates';
+export type ObjectiveMetric = 'ore' | 'pirates' | 'special' | 'streak' | 'elite' | 'storm';
 
 export interface CampaignObjective {
   metric: ObjectiveMetric;

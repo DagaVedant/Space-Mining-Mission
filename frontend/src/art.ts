@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ORES, ORE_IDS, type OreId } from './data';
 import { mulberry32 } from './rng';
+import type { SpecialKind } from './rocks';
 import { ORE_SPRITE, orePalette } from './oreart';
 
 type P = [number, number];
@@ -522,6 +523,119 @@ function makeSmall(scene: Phaser.Scene): void {
   }
 }
 
+/** Special rocks look nothing like ore rocks, so you can tell what you are about to shoot. */
+function makeSpecialRock(scene: Phaser.Scene, kind: SpecialKind, sz: Sz, seed: number): void {
+  const rng = mulberry32(seed);
+  const radius = AST_R[sz];
+  const size = Math.ceil(radius * 2 + 8);
+  const c = size / 2;
+  const g = newG(scene);
+  const base = { volatile: 0x6a2a1e, crystal: 0x2f8f8a, dense: 0x454c57, comet: 0xaed8f0 }[kind];
+  const n = kind === 'dense' ? 8 : kind === 'crystal' ? 9 : 12;
+  const pts: P[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU + (rng() - 0.5) * 0.2;
+    const spike = kind === 'crystal' ? (i % 2 ? 0.72 : 1) : 0.86 + rng() * 0.14;
+    pts.push([c + Math.cos(a) * radius * spike, c + Math.sin(a) * radius * spike]);
+  }
+  const cen: P = [c, c];
+  for (let i = 0; i < n; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % n];
+    const f = ((a[0] + b[0] - size) * -0.62 + (a[1] + b[1] - size) * -0.78) / (2 * radius);
+    fill(g, [cen, a, b], shade(base, 0.85 + 0.35 * f + (rng() - 0.5) * 0.08));
+  }
+  if (kind === 'volatile') {
+    // glowing cracks out from a hot core
+    for (let i = 0; i < n; i += 3) {
+      g.lineStyle(radius * 0.16, 0xff8a24, 1);
+      const mid = lerpP(cen, pts[i], 0.5);
+      g.lineBetween(c, c, mid[0] + (rng() - 0.5) * radius * 0.3, mid[1] + (rng() - 0.5) * radius * 0.3);
+      g.lineBetween(mid[0], mid[1], pts[i][0], pts[i][1]);
+    }
+    g.fillStyle(0xffd24a, 1);
+    g.fillCircle(c, c, radius * 0.26);
+  } else if (kind === 'crystal') {
+    for (let i = 0; i < n; i += 2) {
+      fill(g, [cen, lerpP(cen, pts[i], 0.9), lerpP(cen, pts[(i + 1) % n], 0.55)], 0x8ff0e4, 0.85);
+    }
+    g.fillStyle(0xeafffb, 1);
+    g.fillCircle(c - radius * 0.18, c - radius * 0.22, radius * 0.13);
+  } else if (kind === 'dense') {
+    // riveted plate
+    const inner = pts.map((p) => lerpP(cen, p, 0.62));
+    fill(g, inner, shade(base, 1.25));
+    outline(g, inner, 0x161a20, 2);
+    g.fillStyle(0xd7dee6, 1);
+    for (let i = 0; i < n; i += 2) {
+      const q = lerpP(cen, pts[i], 0.8);
+      g.fillCircle(q[0], q[1], radius * 0.09);
+    }
+  } else {
+    g.fillStyle(0xf4fbff, 1);
+    g.fillCircle(c - radius * 0.2, c - radius * 0.2, radius * 0.45);
+  }
+  outline(g, pts, 0x17140f, 2);
+  bake(g, `rock_${kind}_${sz}`, size, size);
+}
+
+function makeGunship(scene: Phaser.Scene): void {
+  const g = newG(scene);
+  const hull: P[] = [[46, 16], [46, 36], [34, 46], [10, 42], [3, 33], [3, 19], [10, 10], [34, 6]];
+  fill(g, hull, 0x6b6f2c);
+  fill(g, [[46, 16], [34, 6], [10, 10], [3, 19], [3, 26], [46, 26]], 0x8d9240);
+  outline(g, hull, 0x14100e, 2);
+  g.fillStyle(0xcfd6dd, 1);
+  g.fillRect(46, 10, 6, 32);
+  g.fillStyle(0x2b2f12, 1);
+  g.fillRect(14, 22, 20, 8);
+  g.fillStyle(0xffcc33, 1);
+  g.fillRect(5, 23, 5, 6);
+  bake(g, 'pirate_gunship', 54, 52);
+}
+
+function makeMinelayer(scene: Phaser.Scene): void {
+  const g = newG(scene);
+  const hull: P[] = [[42, 22], [30, 6], [8, 6], [2, 22], [8, 38], [30, 38]];
+  fill(g, hull, 0x8a5a1e);
+  fill(g, [[42, 22], [30, 6], [8, 6], [2, 22]], 0xb87b2c);
+  outline(g, hull, 0x14100e, 2);
+  g.fillStyle(0x241a10, 1);
+  g.fillCircle(14, 14, 6);
+  g.fillCircle(14, 30, 6);
+  g.fillStyle(0xe5483a, 1);
+  g.fillCircle(14, 14, 2.5);
+  g.fillCircle(14, 30, 2.5);
+  g.fillStyle(0x5fd0ff, 1);
+  g.fillRect(28, 19, 8, 6);
+  bake(g, 'pirate_minelayer', 44, 44);
+}
+
+function makeScavenger(scene: Phaser.Scene): void {
+  const g = newG(scene);
+  const dark = 0x14100e;
+  fill(g, [[28, 20], [16, 10], [3, 20], [16, 30]], 0x3f8a4a);
+  fill(g, [[28, 20], [16, 10], [3, 20]], 0x5cb568);
+  outline(g, [[28, 20], [16, 10], [3, 20], [16, 30]], dark, 2);
+  // grabber claws
+  fill(g, [[18, 10], [40, 3], [38, 9], [27, 14]], 0xd8c24a);
+  fill(g, [[18, 30], [40, 37], [38, 31], [27, 26]], 0xa8942f);
+  g.fillStyle(0xe8fff0, 1);
+  g.fillRect(14, 18, 5, 4);
+  bake(g, 'pirate_scavenger', 42, 40);
+}
+
+function makeMine(scene: Phaser.Scene): void {
+  const g = newG(scene);
+  g.fillStyle(0x9aa1aa, 1);
+  for (let i = 0; i < 4; i++) g.fillRect(i % 2 ? 0 : 15, i % 2 ? 15 : 0, i % 2 ? 34 : 4, i % 2 ? 4 : 34);
+  g.fillStyle(0x3a2024, 1);
+  g.fillCircle(17, 17, 11);
+  g.fillStyle(0xff5a44, 1);
+  g.fillCircle(17, 17, 5);
+  bake(g, 'mine', 34, 34);
+}
+
 function makeStars(scene: Phaser.Scene): void {
   const layers = [
     { key: 'stars1', count: 110, size: 1, alpha: 0.5 },
@@ -546,6 +660,10 @@ export function buildTextures(scene: Phaser.Scene): void {
   makePirate(scene, 'pirate', 0x8f3b2e, 0xb4503f, 0x5c6068, 0xffcc33);
   makePirate(scene, 'pirate_interceptor', 0x235c75, 0x378bad, 0x64c3db, 0xf0d35b);
   makePirate(scene, 'pirate_bomber', 0x59406e, 0x7d5b9b, 0xb374d5, 0xff7c4a);
+  makeGunship(scene);
+  makeMinelayer(scene);
+  makeScavenger(scene);
+  makeMine(scene);
   makeDrone(scene);
   makeStation(scene);
   makeDiscoveryWreck(scene);
@@ -565,4 +683,7 @@ export function buildTextures(scene: Phaser.Scene): void {
     }
   }
   for (let v = 0; v < 3; v++) makeDebris(scene, `debris_${v}`, 900 + v);
+  for (const kind of ['volatile', 'crystal', 'dense', 'comet'] as const) {
+    for (const sz of SIZES) makeSpecialRock(scene, kind, sz, seed++ * 7919);
+  }
 }

@@ -136,6 +136,18 @@ test('accounts, versioned cloud saves, and authoritative PvP matches work', asyn
   });
   assert.equal(staleWrite.status, 409);
 
+  const expeditionSave = { ...initialSave, v: 5, company: { claims: 3 }, run: null };
+  const putSave = (save: unknown, revision: number) =>
+    fetch(`${baseUrl}/api/save`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${first.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ save, revision }),
+    });
+  assert.equal((await putSave({ ...expeditionSave, company: 'invalid' }, 1)).status, 400);
+  assert.equal((await putSave({ ...expeditionSave, run: [] }, 1)).status, 400);
+  assert.equal((await putSave(expeditionSave, 1)).status, 200);
+  assert.equal((await putSave({ ...expeditionSave, run: { seed: 7, depth: 2 } }, 2)).status, 200);
+
   const one = new WebSocket(wsUrl);
   const two = new WebSocket(wsUrl);
   try {

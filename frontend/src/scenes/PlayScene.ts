@@ -3,11 +3,9 @@ import { fillDisc, strokeArc, strokeRing } from '../draw';
 import { sfx } from '../audio';
 import { AST_R, VARIANTS, type Sz } from '../art';
 import {
-  CAMPAIGN_OBJECTIVES,
   DISCOVERY_SITES,
   ORES,
   ORE_IDS,
-  SECTORS,
   UPGRADES,
   WEAPONS,
   type OreId,
@@ -17,24 +15,16 @@ import {
 } from '../data';
 import { createMarket, priceOf, stepMarket, type MarketState } from '../market';
 import {
-  addEarnings,
   buyUpgrade,
-  campaignObjectiveComplete,
-  campaignRequirementsMet,
   cargoTotal,
   droneUpkeepPerSecond,
   emptyCargo,
   makeContract,
-  persist,
-  objectiveProgress,
-  recordCampaignProgress,
   recordDiscovery,
   refuelCost,
-  recordDailyProgress,
   repairCost,
   refreshUnlocks,
   resolveContracts,
-  statsFor,
   type Cargo,
   type Contract,
   type SaveData,
@@ -50,13 +40,52 @@ import {
   openShop,
   shopOpen,
   showDiscoveryLog,
+  showGate,
   showOverlay,
+  showPerkPick,
+  showRunEnd,
   showSettings,
   type ShopApi,
 } from '../ui';
 import { loadSettings, saveSettings, type ControlAction, type GameSettings } from '../settings';
 import { session } from '../session';
 import { mountTouchControls, type TouchControls } from '../touch';
+import { BOSS_NAMES, Voyage, startRun } from '../voyage';
+import type { RunReport } from '../company';
+import { claimsFor, type RunEnd } from '../run';
+import {
+  AST,
+  BLAST_DAMAGE,
+  BLAST_HULL_DAMAGE,
+  BLAST_RADIUS,
+  COMET_EVERY,
+  MOMENTUM_WINDOW,
+  SPECIALS,
+  STREAK_WINDOW,
+  Streak,
+  WEAK_ARC,
+  WEAK_BONUS_MAX,
+  WEAK_MULTIPLIER,
+  damageAfterArmor,
+  entryAngle,
+  rockHp,
+  rollKind,
+  streakBonus,
+  type RockKind,
+} from '../rocks';
+import {
+  ELITES,
+  MAX_MINES,
+  MINE_LIFE,
+  PIRATE_TYPES,
+  SCAVENGER_LOAD,
+  SHIELD_ARC,
+  hitsShield,
+  pickPirate,
+  rollElite,
+  type EliteMod,
+  type PirateKind,
+} from '../enemies';
 
 type Spr = Phaser.Physics.Arcade.Sprite;
 type Body = Phaser.Physics.Arcade.Body;
@@ -66,6 +95,12 @@ interface Rock extends Spr {
   ore: OreId;
   sz: Sz;
   hp: number;
+  kind: RockKind;
+  /** crystal: where the weak point sits, relative to the rock's own rotation */
+  weakAt: number;
+  weakGiven: number;
+  /** comet: seconds left before it is gone */
+  life: number;
 }
 interface RuntimeDiscoverySite extends DiscoverySite {
   worldX: number;
@@ -86,10 +121,15 @@ interface Planet {
 interface Chunk extends Spr {
   ore: OreId;
   age: number;
+  /** set by Salvage Beacon: homes in from any distance */
+  pulled?: boolean;
 }
 interface Bullet extends Spr {
   life: number;
   dmg: number;
+  pierce: number;
+  push: number;
+  struck: Set<Phaser.GameObjects.GameObject>;
 }
 interface EBullet extends Spr {
   life: number;
@@ -104,17 +144,10 @@ interface Pirate extends Spr {
   loot: Cargo;
   strafe: number;
   ramCd: number;
+  elite: EliteMod | null;
+  max: number;
 }
-type PirateKind = 'raider' | 'interceptor' | 'bomber';
-
-const PIRATE_TYPES: Record<
-  PirateKind,
-  { texture: string; hp: number; speed: number; accel: number; shotDamage: number; shotSpeed: number; fireDelay: number; range: number; radius: number }
-> = {
-  raider: { texture: 'pirate', hp: 1, speed: 240, accel: 1, shotDamage: 6, shotSpeed: 380, fireDelay: 1.5, range: 580, radius: 16 },
-  interceptor: { texture: 'pirate_interceptor', hp: 0.72, speed: 360, accel: 1.28, shotDamage: 5, shotSpeed: 430, fireDelay: 1.05, range: 620, radius: 14 },
-  bomber: { texture: 'pirate_bomber', hp: 1.65, speed: 180, accel: 0.72, shotDamage: 11, shotSpeed: 310, fireDelay: 2.2, range: 760, radius: 20 },
-};
+type RockHit = 'player' | 'drone' | 'turret' | 'chain' | 'blast';
 interface Drone extends Spr {
   hp: number;
   target: Rock | null;
@@ -124,6 +157,9 @@ interface Drone extends Spr {
 }
 interface Debris extends Spr {
   hp: number;
+  /** a pirate mine: sits still and expires */
+  mine?: boolean;
+  life?: number;
 }
 interface Boss extends Spr {
   hp: number;
@@ -133,11 +169,9 @@ interface Boss extends Spr {
   spawnCd: number;
 }
 
-const AST: Record<Sz, { hp: number; mass: number; drop: number; next: Sz | null; hit: number }> = {
-  L: { hp: 70, mass: 8, drop: 2, next: 'M', hit: 1.2 },
-  M: { hp: 34, mass: 3, drop: 1, next: 'S', hit: 0.9 },
-  S: { hp: 16, mass: 1, drop: 2, next: null, hit: 0.55 },
-};
+const ROCK_MAP_COLOR = { volatile: '#ff8a24', crystal: '#8ff0e4', dense: '#d7dee6', comet: '#ffffff' };
+const PULSE_RADIUS = 320;
+const PULSE_COOLDOWN = 12;
 
 const SAFE_R = 270;
 const DOCK_R = 200;
@@ -150,6 +184,7 @@ const FONT = 'Bahnschrift, "Segoe UI", system-ui, sans-serif';
 const rnd = (a: number, b: number): number => a + Math.random() * (b - a);
 
 export class PlayScene extends Phaser.Scene {
+  private voyage!: Voyage;
   private save!: SaveData;
   private sector!: SectorDef;
   private stats!: ShipStats;
@@ -225,6 +260,20 @@ export class PlayScene extends Phaser.Scene {
   private storm = { phase: 'idle' as 'idle' | 'warn' | 'active', t: 0, dir: 0, spawnCd: 0 };
   private turretCd = 0;
   private boss: Boss | null = null;
+  private bossSlain = false;
+  /** an overlay that has to be answered: Escape and focus changes leave it alone */
+  private modal = false;
+  private escort: Phaser.GameObjects.Image | null = null;
+  private escortCd = 0;
+  private streak = new Streak();
+  /** seconds of hit-stop left */
+  private freeze = 0;
+  private damageShown = new WeakMap<object, { sum: number; at: number }>();
+  private pulseCd = 0;
+  private touchPulseHeld = false;
+  private nextComet = COMET_EVERY;
+  /** one-off tips already shown this flight */
+  private tipped = new Set<string>();
   private goalAnnounced = false;
   private objectiveAnnounced = false;
   private touchInteractHeld = false;
@@ -245,12 +294,12 @@ export class PlayScene extends Phaser.Scene {
   private discoveryLogHandler = (): void => {
     if (this.paused || this.docked || this.dead || this.warping) return;
     this.setPaused(true);
-    showDiscoveryLog(this.save, () => this.setPaused(false));
+    showDiscoveryLog(this.voyage.home, () => this.setPaused(false));
   };
 
   private keyHandler = (e: KeyboardEvent): void => this.onKey(e);
   private blurHandler = (): void => {
-    if (!this.paused && !this.docked && !this.dead && !this.warping) this.setPaused(true);
+    if (!this.paused && !this.docked && !this.dead && !this.warping && !this.modal) this.setPaused(true);
   };
 
   constructor() {
@@ -258,16 +307,19 @@ export class PlayScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.save = session.save;
-    this.sector = SECTORS[this.save.sector];
-    this.stats = statsFor(this.save.levels, this.save.selectedPilot);
+    if (session.mode === 'expedition' && !session.save.run) startRun(session.save);
+    this.voyage = new Voyage(session.save, session.mode);
+    this.save = this.voyage.save;
+    this.sector = this.voyage.sector;
+    this.stats = this.voyage.stats();
+    const run = this.voyage.run;
     this.S = this.sector.size;
     this.cx = this.S / 2;
     this.cy = this.S / 2;
     this.gx = this.cx + 720;
     this.gy = this.cy;
     this.discoverySites = DISCOVERY_SITES
-      .filter((site) => site.sector === this.save.sector)
+      .filter((site) => !run && site.sector === this.save.sector)
       .map((site) => ({ ...site, worldX: site.x * this.S, worldY: site.y * this.S }));
     this.discoveryViews.clear();
     this.clock = 0;
@@ -284,8 +336,18 @@ export class PlayScene extends Phaser.Scene {
     this.flare = { phase: 'idle', t: 0, dmgCd: 0 };
     this.storm = { phase: 'idle', t: 0, dir: 0, spawnCd: 0 };
     this.boss = null;
-    this.goalAnnounced = campaignRequirementsMet(this.save);
-    this.objectiveAnnounced = campaignObjectiveComplete(this.save);
+    this.bossSlain = false;
+    this.modal = false;
+    this.escort = null;
+    this.escortCd = 0;
+    this.streak = new Streak();
+    this.freeze = 0;
+    this.pulseCd = 0;
+    this.touchPulseHeld = false;
+    this.nextComet = COMET_EVERY * rnd(0.5, 1);
+    this.tipped = new Set();
+    this.goalAnnounced = this.voyage.requirementsMet();
+    this.objectiveAnnounced = this.voyage.objectiveDone();
     this.rocksBroken = 0;
     this.piratesDefeated = 0;
     this.oreCollected = 0;
@@ -296,13 +358,13 @@ export class PlayScene extends Phaser.Scene {
     this.deadBanner = false;
     this.wells = [];
     this.planets = [];
-    this.hull = this.stats.hullMax;
+    this.hull = Math.min(run?.hull ?? this.stats.hullMax, this.stats.hullMax);
     this.shield = this.stats.shieldMax;
     this.shieldRecharge = 0;
     this.fuel = this.stats.fuelMax;
-    this.cargo = { ...emptyCargo(), ...session.cargo };
+    this.cargo = { ...emptyCargo(), ...(run ? run.cargo : session.cargo) };
     this.market = createMarket(Math.random);
-    this.offers = [0, 1, 2].map(() => makeContract(this.save.sector, 0, Math.random));
+    this.offers = [0, 1, 2].map(() => makeContract(this.voyage.tier, 0, Math.random));
     this.active = [];
 
     this.physics.world.setBounds(0, 0, this.S, this.S);
@@ -322,6 +384,7 @@ export class PlayScene extends Phaser.Scene {
     this.buildPlayer();
     this.buildColliders();
     this.ensureDrones();
+    if (this.voyage.has('escort')) this.escort = this.add.image(this.player.x, this.player.y, 'drone').setTint(0xffd27a).setDepth(5);
 
     const kb = this.input.keyboard!;
     const keyNames = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'SPACE', 'SHIFT', 'ESC'];
@@ -345,18 +408,86 @@ export class PlayScene extends Phaser.Scene {
       closeOverlay();
       this.touch.destroy();
       hud.hide();
-      sfx.thrust(0);
+      sfx.quiet();
     });
 
     hud.show();
     this.mm = hud.minimap();
     document.getElementById('discovery-log')?.addEventListener('click', this.discoveryLogHandler);
-    if (this.settings.showTutorial) this.showFlightSchool();
-    hud.toast(`Sector ${this.save.sector + 1}: ${this.sector.name}`, 'info');
-    if (this.save.sector === 0 && this.save.lifetime === 0) {
+    if (this.settings.showTutorial && !run) this.showFlightSchool();
+    hud.toast(this.voyage.info().name, 'info');
+    if (!run && this.save.sector === 0 && this.save.lifetime === 0) {
       hud.toast('Shoot rocks, grab the ore, then press E at the station to sell.', 'info');
     }
+    if (run && run.phase !== 'fly') this.showDepthChoice();
     if (import.meta.env.DEV) (window as unknown as { __rb: PlayScene }).__rb = this;
+  }
+
+  /** Between depths: pick a perk, then push on or head home. The next depth waits behind it. */
+  private showDepthChoice(): void {
+    const run = this.voyage.run;
+    if (!run) return;
+    this.holdForChoice();
+    if (run.phase === 'perk') {
+      showPerkPick({
+        depth: run.depth,
+        offer: this.voyage.offer(),
+        rerolls: run.rerolls,
+        onPick: (id) => {
+          this.voyage.takePerk(id);
+          // the new perk may change stats or add the drone, so rebuild the depth
+          this.restartDepth();
+        },
+        onReroll: () => {
+          if (this.voyage.reroll()) this.showDepthChoice();
+        },
+        onMenu: () => this.toMenu(),
+      });
+      return;
+    }
+    showGate({
+      depth: run.depth,
+      earned: run.earned,
+      claims: claimsFor(run, 'extract'),
+      lostClaims: claimsFor(run, 'death'),
+      hull: Math.round(this.hull),
+      hullMax: this.stats.hullMax,
+      onPush: () => {
+        this.voyage.pushOn();
+        this.modal = false;
+        this.setPaused(false);
+      },
+      onExtract: () => this.finishRun('extract', this.voyage.end('extract', this.cargo, this.hull)),
+      onMenu: () => this.toMenu(),
+    });
+  }
+
+  private restartDepth(): void {
+    this.time.paused = false;
+    this.physics.world.resume();
+    this.scene.restart();
+  }
+
+  private holdForChoice(): void {
+    this.modal = true;
+    this.paused = true;
+    this.physics.world.pause();
+    this.time.paused = true;
+    sfx.quiet();
+  }
+
+  private finishRun(how: RunEnd, report: RunReport): void {
+    this.holdForChoice();
+    showRunEnd({
+      how,
+      depth: this.voyage.run?.depth ?? 0,
+      report,
+      onAgain: () => {
+        startRun(this.voyage.home);
+        this.restartDepth();
+      },
+      onMenu: () => this.toMenu(),
+    });
   }
 
   private buildBackground(): void {
@@ -408,7 +539,7 @@ export class PlayScene extends Phaser.Scene {
       .setVisible(this.save.levels.turret > 0);
     this.gateGlow = this.add.image(this.gx, this.gy, 'gateglow').setDepth(-1).setAlpha(0).setScale(0.9);
     this.gate = this.add.image(this.gx, this.gy, 'gate').setDepth(0);
-    if (this.sector.boss) {
+    if (!this.voyage.hasGate) {
       this.gate.setVisible(false);
       this.gateGlow.setVisible(false);
     }
@@ -564,10 +695,18 @@ export class PlayScene extends Phaser.Scene {
           }
         }
         if (!clear) continue;
-        this.spawnRock(x, y, sz, pickWeighted(this.sector.weights, Math.random));
+        this.spawnRock(x, y, sz, pickWeighted(this.sector.weights, Math.random), undefined, undefined, this.newKind(sz));
         break;
       }
     }
+  }
+
+  private wants(metric: 'special' | 'elite'): boolean {
+    return this.voyage.objective.metric === metric && !this.voyage.objectiveDone();
+  }
+
+  private newKind(sz: Sz): RockKind {
+    return rollKind(sz, this.voyage.threat, this.wants('special'), Math.random);
   }
 
   private buildPlayer(): void {
@@ -595,19 +734,23 @@ export class PlayScene extends Phaser.Scene {
     ph.add.overlap(this.bullets, this.bosses, (b, o) => this.onBulletBoss(b as Bullet, o as Boss));
     ph.add.overlap(this.bullets, this.debris, (b, d) => this.onBulletDebris(b as Bullet, d as Debris));
     ph.add.overlap(this.ebullets, this.player, (_p, e) => this.onEBulletPlayer(e as EBullet));
-    ph.add.overlap(this.ebullets, this.drones, (d, e) => this.onEBulletDrone(e as EBullet, d as Drone));
+    ph.add.overlap(this.ebullets, this.drones, (e, d) => this.onEBulletDrone(e as EBullet, d as Drone));
     ph.add.overlap(this.debris, this.player, (_p, d) => this.onDebrisPlayer(d as Debris));
-    ph.add.overlap(this.debris, this.drones, (d, x) => this.onDebrisDrone(x as Debris, d as Drone));
-    ph.add.overlap(this.debris, this.pirates, (p, x) => this.onDebrisPirate(x as Debris, p as Pirate));
+    ph.add.overlap(this.debris, this.drones, (d, dr) => this.onDebrisDrone(d as Debris, dr as Drone));
+    ph.add.overlap(this.debris, this.pirates, (d, p) => this.onDebrisPirate(d as Debris, p as Pirate));
     ph.add.overlap(this.bosses, this.player, () => this.onBossRam());
   }
 
-  private spawnRock(x: number, y: number, sz: Sz, ore: OreId, vx?: number, vy?: number): Rock {
+  private spawnRock(x: number, y: number, sz: Sz, ore: OreId, vx?: number, vy?: number, kind: RockKind = 'plain'): Rock {
     const v = Math.floor(Math.random() * VARIANTS);
-    const r = this.rocks.create(x, y, `ast_${ore}_${sz}_${v}`) as Rock;
+    const r = this.rocks.create(x, y, kind === 'plain' ? `ast_${ore}_${sz}_${v}` : `rock_${kind}_${sz}`) as Rock;
     r.ore = ore;
     r.sz = sz;
-    r.hp = AST[sz].hp * (1 + 0.15 * this.save.sector);
+    r.kind = kind;
+    r.hp = rockHp(sz, kind, this.voyage.threat);
+    r.weakAt = rnd(0, Math.PI * 2);
+    r.weakGiven = 0;
+    r.life = Infinity;
     r.setDepth(1);
     const rad = AST_R[sz] * 0.84;
     const half = r.width / 2;
@@ -660,12 +803,14 @@ export class PlayScene extends Phaser.Scene {
       y = Phaser.Math.Clamp(p0.y + Math.sin(a) * d, 80, this.S - 80);
       if (Phaser.Math.Distance.Between(x, y, p0.x, p0.y) > 700) break;
     }
-    const roll = Math.random();
-    const kind: PirateKind = this.save.sector < 1 ? 'raider' : roll < 0.34 ? 'interceptor' : roll < 0.58 ? 'bomber' : 'raider';
+    const kind: PirateKind = pickPirate(this.voyage.threat, Math.random);
+    const elite = rollElite(kind, this.voyage.threat, this.wants('elite'), Math.random);
     const type = PIRATE_TYPES[kind];
     const pr = this.pirates.create(x, y, type.texture) as Pirate;
     pr.kind = kind;
-    pr.hp = (40 + 22 * this.save.sector) * type.hp;
+    pr.elite = elite;
+    pr.max = (40 + 22 * this.voyage.threat) * type.hp * (elite === 'armored' ? 2.2 : elite ? 1.4 : 1);
+    pr.hp = pr.max;
     pr.mode = 'attack';
     pr.fireCd = rnd(1.5, 2.5);
     pr.fleeT = 0;
@@ -679,12 +824,86 @@ export class PlayScene extends Phaser.Scene {
     b.setBounce(0.5);
     b.setDamping(true);
     b.setDrag(0.5);
-    b.setMaxVelocity(type.speed + 12 * this.save.sector, type.speed + 12 * this.save.sector);
+    const top = (type.speed + 12 * Math.min(this.voyage.threat, 8)) * (elite === 'swift' ? 1.35 : 1);
+    b.setMaxVelocity(top, top);
     b.mass = 2;
+    if (elite) pr.setScale(1.25);
+    this.paintPirate(pr);
     this.warpRing(x, y, 0xe5483a);
     sfx.pirate();
     sfx.alarm();
-    hud.toast('Pirates on scope - protect your cargo.', 'bad');
+    if (elite) hud.toast(`Elite on scope: ${ELITES[elite].name} ${type.name}.`, 'bad');
+    else hud.toast('Pirates on scope - protect your cargo.', 'bad');
+    if (kind === 'gunship') this.tipOnce('gunship', 'Gunships are shielded in front. Get round behind them.');
+    if (kind === 'minelayer') this.tipOnce('minelayer', 'Mine layers leave mines behind. Shoot or pulse them.');
+    if (kind === 'scavenger') this.tipOnce('scavenger', 'A scavenger is after your loose ore. Kill it to get it back.');
+  }
+
+  private tipOnce(key: string, msg: string): void {
+    if (this.tipped.has(key)) return;
+    this.tipped.add(key);
+    hud.toast(msg, 'info');
+  }
+
+  /** The tint a pirate rests at, restored after a hit flash. */
+  private paintPirate(p: Pirate): void {
+    if (p.elite) p.setTint(ELITES[p.elite].color);
+    else if (p.mode === 'flee') p.setTint(0xffd0a0);
+    else p.clearTint();
+  }
+
+  private hurtPirate(p: Pirate, dmg: number): void {
+    if (!p.active) return;
+    p.hp -= dmg;
+    p.setTintFill(0xffffff);
+    this.time.delayedCall(45, () => p.active && this.paintPirate(p));
+    if (p.hp <= 0) this.killPirate(p);
+  }
+
+  private spawnComet(): void {
+    const p = this.player;
+    const a = rnd(0, Math.PI * 2);
+    const x = p.x + Math.cos(a) * 950;
+    const y = p.y + Math.sin(a) * 950;
+    // aimed to cross near the ship rather than into it
+    const course = Math.atan2(p.y - y, p.x - x) + rnd(0.12, 0.22) * (Math.random() < 0.5 ? -1 : 1);
+    const sz: Sz = Math.random() < 0.6 ? 'S' : 'M';
+    const ore = pickWeighted(this.sector.weights, Math.random);
+    const comet = this.spawnRock(x, y, sz, ore, Math.cos(course) * 270, Math.sin(course) * 270, 'comet');
+    comet.life = 11;
+    (comet.body as Body).setCollideWorldBounds(false);
+    sfx.flare();
+    hud.toast('Comet crossing nearby. Catch it before it is gone.', 'good');
+  }
+
+  private pulseCooldown(): number {
+    return PULSE_COOLDOWN / (this.voyage.has('pulsecore') ? 2 : 1);
+  }
+
+  /** Clears enemy shots and mines close by and throws everything else back. */
+  private pulse(): void {
+    if (this.paused || this.docked || this.dead || this.warping || this.pulseCd > 0) return;
+    this.pulseCd = this.pulseCooldown();
+    const { x, y } = this.player;
+    const near = (o: { x: number; y: number }): number => Phaser.Math.Distance.Between(x, y, o.x, o.y);
+    for (const e of [...(this.ebullets.getChildren() as EBullet[])]) if (near(e) < PULSE_RADIUS) e.destroy();
+    for (const d of [...(this.debris.getChildren() as Debris[])]) {
+      if (d.mine && near(d) < PULSE_RADIUS) {
+        this.burst(this.fxRed, d.x, d.y, 6);
+        d.destroy();
+      }
+    }
+    for (const o of [...this.rocks.getChildren(), ...this.pirates.getChildren(), ...this.debris.getChildren()] as Spr[]) {
+      const d = near(o);
+      if (d >= PULSE_RADIUS) continue;
+      const a = Math.atan2(o.y - y, o.x - x);
+      const sp = 480 - 220 * (d / PULSE_RADIUS);
+      o.setVelocity(Math.cos(a) * sp, Math.sin(a) * sp);
+    }
+    const ring = this.add.circle(x, y, 20, 0x8fd8ff, 0).setStrokeStyle(2, 0x8fd8ff, 0.9).setDepth(9);
+    this.tweens.add({ targets: ring, scale: PULSE_RADIUS / 20, alpha: 0, duration: 340, onComplete: () => ring.destroy() });
+    sfx.pulse();
+    this.shake(120, 0.004);
   }
 
   private spawnDrone(idx: number): void {
@@ -708,8 +927,10 @@ export class PlayScene extends Phaser.Scene {
   private spawnBoss(): void {
     const x = this.cx;
     const y = 360;
+    const mid = this.voyage.boss === 'mid';
     const b = this.bosses.create(x, y, 'dread') as Boss;
-    const hp = 1800;
+    // the campaign boss stays at 1800; expedition ones grow with depth
+    const hp = !this.voyage.run ? 1800 : mid ? 600 + 180 * this.voyage.threat : 800 + 220 * this.voyage.threat;
     b.hp = hp;
     b.max = hp;
     b.fireCd = 2.5;
@@ -719,12 +940,19 @@ export class PlayScene extends Phaser.Scene {
     const body = b.body as Body;
     body.setCircle(96, b.width / 2 - 96 + 20, b.height / 2 - 96);
     body.setCollideWorldBounds(true);
+    if (mid) b.setScale(0.6).setTint(0xffb08a);
     this.boss = b;
     sfx.boss();
     sfx.alarm();
     this.shake(900, 0.008);
-    this.flash('THE DREADNOUGHT HAS ARRIVED', 'danger', 7);
-    hud.toast('Boss inbound. Destroy the Dreadnought to clear the Maw.', 'bad');
+    const name = BOSS_NAMES[mid ? 'mid' : 'dread'];
+    this.flash(`THE ${name.toUpperCase()} HAS ARRIVED`, 'danger', 7);
+    hud.toast(
+      this.voyage.run
+        ? `Boss inbound. Destroy the ${name} to open the gate.`
+        : 'Boss inbound. Destroy the Dreadnought to clear the Eclipse Frontier.',
+      'bad',
+    );
   }
 
   private warpRing(x: number, y: number, color: number): void {
@@ -745,9 +973,28 @@ export class PlayScene extends Phaser.Scene {
     this.tweens.add({ targets: c, scale: size * 4, alpha: 0, duration: 420, onComplete: () => c.destroy() });
   }
 
-  private floatText(x: number, y: number, msg: string, color = '#f2b53d'): void {
+  /** Holds the world still for a moment so a big kill lands. */
+  private hitStop(ms: number): void {
+    if (!this.settings.screenShake || this.settings.reducedMotion || this.docked) return;
+    this.freeze = Math.max(this.freeze, ms / 1000);
+    this.physics.world.pause();
+  }
+
+  /** Rapid hits on one target add up into a single number. */
+  private showDamage(target: { x: number; y: number }, dmg: number): void {
+    if (this.settings.reducedMotion) return;
+    const entry = this.damageShown.get(target) ?? { sum: 0, at: -1 };
+    this.damageShown.set(target, entry);
+    entry.sum += dmg;
+    if (this.t - entry.at < 0.2) return;
+    this.floatText(target.x + rnd(-14, 14), target.y - 24, String(Math.round(entry.sum)), '#ffffff', 15);
+    entry.sum = 0;
+    entry.at = this.t;
+  }
+
+  private floatText(x: number, y: number, msg: string, color = '#f2b53d', size = 18): void {
     const t = this.add
-      .text(x, y, msg, { fontFamily: FONT, fontSize: '18px', fontStyle: 'bold', color, stroke: '#07090c', strokeThickness: 4 })
+      .text(x, y, msg, { fontFamily: FONT, fontSize: `${size}px`, fontStyle: 'bold', color, stroke: '#07090c', strokeThickness: 4 })
       .setOrigin(0.5)
       .setDepth(20);
     this.tweens.add({ targets: t, y: y - 38, alpha: 0, duration: 900, onComplete: () => t.destroy() });
@@ -758,22 +1005,22 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private earn(amount: number): void {
-    addEarnings(this.save, amount);
+    this.voyage.earn(amount);
     this.sectorCredits += amount;
     this.updateCampaignProgress();
   }
 
   private updateCampaignProgress(): void {
-    if (!this.objectiveAnnounced && campaignObjectiveComplete(this.save)) {
+    if (!this.objectiveAnnounced && this.voyage.objectiveDone()) {
       this.objectiveAnnounced = true;
-      const reward = CAMPAIGN_OBJECTIVES[this.save.sector].reward;
-      hud.toast(`Sector objective complete. Bonus: ${money(reward)}.`, 'good');
+      const { reward } = this.voyage.objective;
+      hud.toast(`Objective complete. Bonus: ${money(reward)}.`, 'good');
       this.earn(reward);
     }
-    if (!this.goalAnnounced && campaignRequirementsMet(this.save)) {
+    if (!this.goalAnnounced && this.voyage.requirementsMet()) {
       this.goalAnnounced = true;
-      if (!this.sector.boss) {
-        this.flash('SECTOR OBJECTIVE + QUOTA COMPLETE - WARP GATE OPEN', 'good', 8);
+      if (this.voyage.gateOpen()) {
+        this.flash('OBJECTIVE + QUOTA COMPLETE - WARP GATE OPEN', 'good', 8);
         hud.toast('The warp gate is open. Dock first, then fly to the gate.', 'good');
         sfx.sell();
       }
@@ -846,13 +1093,20 @@ export class PlayScene extends Phaser.Scene {
     this.dead = true;
     this.hull = 0;
     sfx.explode();
-    sfx.thrust(0);
+    sfx.quiet();
     this.explosion(this.player.x, this.player.y, 3);
     this.shake(500, 0.012);
     this.player.disableBody(true, true);
     this.flame.setVisible(false);
     const lost = cargoTotal(this.cargo);
     this.cargo = emptyCargo();
+    if (this.voyage.run) {
+      // banked at once, so closing the tab cannot bring the ship back
+      const report = this.voyage.end('death', this.cargo);
+      this.deadBanner = true;
+      this.time.delayedCall(2200, () => this.finishRun('death', report));
+      return;
+    }
     const fee = Math.min(this.save.money, Math.round(this.save.money * 0.08 + 25));
     this.save.money -= fee;
     this.deadBanner = true;
@@ -870,11 +1124,40 @@ export class PlayScene extends Phaser.Scene {
     this.player.enableBody(true, this.cx + 260, this.cy, true, true);
     this.player.setVelocity(0, 0);
     this.cameras.main.centerOn(this.player.x, this.player.y);
-    persist(this.save);
+    this.store();
   }
 
-  private damageRock(r: Rock, dmg: number, by: 'player' | 'drone' | 'turret'): void {
-    r.hp -= dmg;
+  private store(): void {
+    this.voyage.store(this.cargo, this.hull);
+  }
+
+  /** Counts a break toward the streak and returns the extra ore it earns. */
+  private countStreak(x: number, y: number): number {
+    const count = this.streak.hit(this.voyage.has('momentum') ? MOMENTUM_WINDOW : STREAK_WINDOW);
+    const bonus = streakBonus(count);
+    if (count >= 3) this.floatText(x, y - 18, bonus ? `x${count}  +${bonus} ore` : `x${count}`, '#ffe08a');
+    this.voyage.record('streak', count);
+    if (count > this.voyage.home.company.stats.bestStreak) this.reportMilestones(this.voyage.tally('bestStreak', count));
+    return bonus;
+  }
+
+  private blast(x: number, y: number): void {
+    this.explosion(x, y, 2.6);
+    this.warpRing(x, y, 0xff8a24);
+    sfx.explode();
+    this.shake(150, 0.008);
+    const reaches = (o: { x: number; y: number }, r = BLAST_RADIUS): boolean => Phaser.Math.Distance.Between(x, y, o.x, o.y) < r;
+    const damage = BLAST_DAMAGE * (1 + 0.15 * this.voyage.threat);
+    for (const rock of [...(this.rocks.getChildren() as Rock[])]) if (rock.active && reaches(rock)) this.damageRock(rock, damage, 'blast');
+    for (const pr of [...(this.pirates.getChildren() as Pirate[])]) if (reaches(pr)) this.hurtPirate(pr, damage);
+    if (!this.dead && reaches(this.player, BLAST_RADIUS * 0.7)) this.hurtPlayer(BLAST_HULL_DAMAGE);
+  }
+
+  private damageRock(r: Rock, dmg: number, by: RockHit): void {
+    const dealt = damageAfterArmor(r.kind, dmg);
+    r.hp -= dealt;
+    if (r.kind === 'dense' && by === 'player') this.showDamage(r, dealt);
+    if (r.kind === 'dense' && by === 'player') this.tipOnce('dense', 'Dense cores shrug off light hits, but they are rich.');
     r.setTintFill(0xffffff);
     this.time.delayedCall(45, () => r.active && r.clearTint());
     this.burst(this.fxRock, r.x, r.y, 4);
@@ -882,8 +1165,8 @@ export class PlayScene extends Phaser.Scene {
     if (r.hp <= 0) this.breakRock(r, by);
   }
 
-  private breakRock(r: Rock, by: 'player' | 'drone' | 'turret'): void {
-    const { x, y, sz, ore } = r;
+  private breakRock(r: Rock, by: RockHit): void {
+    const { x, y, sz, ore, kind } = r;
     this.rocksBroken++;
     r.destroy();
     this.explosion(x, y, sz === 'L' ? 1.6 : sz === 'M' ? 1 : 0.6);
@@ -891,11 +1174,28 @@ export class PlayScene extends Phaser.Scene {
     sfx.rockBreak(sz);
     if (sz === 'L') this.shake(90, 0.003);
     const def = AST[sz];
-    for (let i = 0; i < def.drop; i++) {
+    const desperate = this.voyage.has('desperate') && this.hull < this.stats.hullMax * 0.4;
+    // a chain hit never chains again, so one shot cannot clear the field
+    if (by === 'player' && this.voyage.has('chain')) {
+      for (const other of [...(this.rocks.getChildren() as Rock[])]) {
+        if (Phaser.Math.Distance.Between(x, y, other.x, other.y) < 150) this.damageRock(other, this.stats.damage, 'chain');
+      }
+    }
+    const bonus = by === 'drone' || by === 'turret' ? 0 : this.countStreak(x, y);
+    const drops = (kind === 'plain' ? def.drop : SPECIALS[kind].drop[sz]) * (desperate ? 2 : 1) + bonus;
+    for (let i = 0; i < drops; i++) {
       if (by === 'drone') this.droneEarn(ore, 1, x, y);
       else this.spawnChunk(x + rnd(-8, 8), y + rnd(-8, 8), ore);
     }
-    if (def.next) {
+    if (kind !== 'plain' && by !== 'drone') {
+      this.voyage.record('special');
+      if (kind === 'volatile') this.reportMilestones(this.voyage.tally('volatile'));
+    }
+    this.updateCampaignProgress();
+    if (kind === 'dense' && by === 'player') this.hitStop(60);
+    // a beat later, so a chain of volatiles ripples instead of landing all at once
+    if (kind === 'volatile') this.time.delayedCall(110, () => this.blast(x, y));
+    if (kind === 'plain' && def.next) {
       const off = AST_R[def.next] * 0.9;
       const a0 = rnd(0, Math.PI * 2);
       for (let k = 0; k < 2; k++) {
@@ -907,17 +1207,29 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private killPirate(p: Pirate): void {
-    const { x, y } = p;
+    const { x, y, elite } = p;
     this.piratesDefeated++;
     p.destroy();
     this.explosion(x, y, 1.5);
     sfx.explode();
     for (const o of ORE_IDS) for (let i = 0; i < p.loot[o]; i++) this.spawnChunk(x + rnd(-10, 10), y + rnd(-10, 10), o);
-    const bounty = 40 + 25 * this.save.sector;
+    const bounty = Math.round((40 + 25 * this.voyage.threat) * (this.voyage.has('bounty') ? 2 : 1) * (elite ? 2.5 : 1));
+    if (elite) {
+      for (let i = 0; i < 5; i++) this.spawnChunk(x + rnd(-14, 14), y + rnd(-14, 14), pickWeighted(this.sector.weights, Math.random));
+      this.hitStop(90);
+      this.voyage.record('elite');
+      this.reportMilestones(this.voyage.tally('elites'));
+    }
     this.earn(bounty);
-    recordDailyProgress(this.save, 'pirates', 1);
-    recordCampaignProgress(this.save, 'pirates');
+    this.voyage.daily('pirates');
+    this.voyage.record('pirates');
     this.updateCampaignProgress();
+    if (this.voyage.has('leech') && !this.dead) this.hull = Math.min(this.stats.hullMax, this.hull + 15);
+    if (this.voyage.has('magpulse')) {
+      for (const c of this.chunks.getChildren() as Chunk[]) {
+        if (Phaser.Math.Distance.Between(x, y, c.x, c.y) < 700) c.pulled = true;
+      }
+    }
     this.floatText(x, y - 20, `Bounty ${money(bounty)}`);
     if (cargoTotal(p.loot) > 0) hud.toast('Pirate down. Your stolen ore dropped - grab it.', 'good');
   }
@@ -943,29 +1255,58 @@ export class PlayScene extends Phaser.Scene {
 
   private onBulletRock(b: Bullet, r: Rock): void {
     if (!b.active || !r.active) return;
-    const dmg = b.dmg;
+    let { dmg } = b;
     const by = b.texture.key === 'tbullet' ? 'turret' : 'player';
-    this.burst(this.fxSpark, b.x, b.y, 3);
-    b.destroy();
+    // read everything first: spending the shot may destroy it
+    const { x, y, push } = b;
+    const { x: vx, y: vy } = (b.body as Body).velocity;
+    if (!this.spendBullet(b, r)) return;
+    if (r.kind === 'crystal' && by === 'player') {
+      const hit = entryAngle(x - r.x, y - r.y, vx, vy, (r.body as Body).halfWidth);
+      if (Math.abs(Phaser.Math.Angle.Wrap(hit - r.rotation - r.weakAt)) < WEAK_ARC) {
+        dmg *= WEAK_MULTIPLIER;
+        this.burst(this.fxSpark, x, y, 8);
+        if (r.weakGiven < WEAK_BONUS_MAX) {
+          r.weakGiven++;
+          this.spawnChunk(x, y, r.ore);
+          this.floatText(x, y - 12, 'Weak point', '#9ff5ea');
+        }
+      } else this.tipOnce('crystal', 'Crystals have a glowing weak point. Hit it for extra ore.');
+    }
+    this.shove(r, vx, vy, push / (r.sz === 'L' ? 3 : 1));
     this.damageRock(r, dmg, by);
+  }
+
+  private shove(target: Spr, vx: number, vy: number, push: number): void {
+    if (push <= 0) return;
+    const speed = Math.hypot(vx, vy) || 1;
+    const body = target.body as Body;
+    body.velocity.x += (vx / speed) * push;
+    body.velocity.y += (vy / speed) * push;
   }
 
   private onBulletPirate(b: Bullet, p: Pirate): void {
     if (!b.active || !p.active) return;
-    p.hp -= b.dmg;
-    this.burst(this.fxSpark, b.x, b.y, 4);
-    b.destroy();
-    p.setTintFill(0xffffff);
-    this.time.delayedCall(45, () => p.active && p.clearTint());
+    const { dmg, push } = b;
+    const { x: vx, y: vy } = (b.body as Body).velocity;
+    if (p.kind === 'gunship' && hitsShield(p.rotation, Math.atan2(vy, vx))) {
+      this.burst(this.fxSpark, b.x, b.y, 5);
+      b.destroy();
+      return;
+    }
+    if (!this.spendBullet(b, p)) return;
     sfx.rockHit();
-    if (p.hp <= 0) this.killPirate(p);
+    this.shove(p, vx, vy, push);
+    this.showDamage(p, dmg);
+    this.hurtPirate(p, dmg);
   }
 
   private onBulletBoss(b: Bullet, o: Boss): void {
     if (!b.active || !o.active) return;
-    o.hp -= b.dmg;
-    this.burst(this.fxSpark, b.x, b.y, 3);
-    b.destroy();
+    const dmg = b.dmg;
+    if (!this.spendBullet(b, o)) return;
+    o.hp -= dmg;
+    this.showDamage(o, dmg);
     o.setTintFill(0xffffff);
     this.time.delayedCall(40, () => o.active && o.clearTint());
     if (o.hp <= 0) this.killBoss(o);
@@ -973,14 +1314,24 @@ export class PlayScene extends Phaser.Scene {
 
   private onBulletDebris(b: Bullet, d: Debris): void {
     if (!b.active || !d.active) return;
-    d.hp -= b.dmg;
-    this.burst(this.fxSpark, b.x, b.y, 3);
-    b.destroy();
+    const dmg = b.dmg;
+    if (!this.spendBullet(b, d)) return;
+    d.hp -= dmg;
     if (d.hp <= 0) {
       this.burst(this.fxRock, d.x, d.y, 8);
       sfx.rockHit();
       d.destroy();
     }
+  }
+
+  /** True if this shot should hurt the target. Piercing shots live on but hit each target once. */
+  private spendBullet(b: Bullet, target: Phaser.GameObjects.GameObject): boolean {
+    if (b.struck.has(target)) return false;
+    b.struck.add(target);
+    this.burst(this.fxSpark, b.x, b.y, 3);
+    if (b.pierce > 0) b.pierce -= 1;
+    else b.destroy();
+    return true;
   }
 
   private onEBulletPlayer(e: EBullet): void {
@@ -1003,7 +1354,7 @@ export class PlayScene extends Phaser.Scene {
     if (!d.active || this.docked || this.dead) return;
     this.burst(this.fxRock, d.x, d.y, 10);
     d.destroy();
-    this.hurtPlayer(10 + 3 * this.save.sector);
+    this.hurtPlayer(10 + 3 * Math.min(this.voyage.threat, 10));
   }
 
   private onDebrisDrone(d: Debris, dr: Drone): void {
@@ -1015,11 +1366,11 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private onDebrisPirate(d: Debris, p: Pirate): void {
-    if (!d.active || !p.active) return;
+    // pirates know where their own mines are
+    if (!d.active || !p.active || d.mine) return;
     this.burst(this.fxRock, d.x, d.y, 8);
     d.destroy();
-    p.hp -= 14;
-    if (p.hp <= 0) this.killPirate(p);
+    this.hurtPirate(p, 14);
   }
 
   private onBossRam(): void {
@@ -1036,6 +1387,8 @@ export class PlayScene extends Phaser.Scene {
   private killBoss(b: Boss): void {
     const { x, y } = b;
     this.boss = null;
+    this.bossSlain = true;
+    this.hitStop(180);
     b.destroy();
     sfx.explode();
     for (let i = 0; i < 9; i++) {
@@ -1046,12 +1399,22 @@ export class PlayScene extends Phaser.Scene {
       });
     }
     this.time.delayedCall(1500, () => {
-      for (let i = 0; i < 14; i++) this.spawnChunk(x + rnd(-80, 80), y + rnd(-60, 60), 'voidstone');
+      const mid = this.voyage.boss === 'mid';
+      for (let i = 0; i < (mid ? 8 : 14); i++) this.spawnChunk(x + rnd(-80, 80), y + rnd(-60, 60), 'voidstone');
+      if (this.voyage.run) {
+        this.voyage.bossDown();
+        this.earn((mid ? 200 : 600) * (1 + this.voyage.threat));
+        if (!mid) this.reportMilestones(this.voyage.tally('bosses'));
+        this.updateCampaignProgress();
+        if (this.voyage.gateOpen()) this.flash('THE WAY IS CLEAR - WARP GATE OPEN', 'good', 8);
+        this.store();
+        return;
+      }
       this.earn(5000);
       this.save.won = true;
-      persist(this.save);
+      this.store();
       showOverlay(
-        'THE MAW IS CLEAR',
+        'THE FRONTIER IS CLEAR',
         `The Dreadnought is wreckage and the belt is yours. Lifetime earnings: ${money(this.save.lifetime)}. You can keep mining in free play, or head back to the menu.`,
         [
           { label: 'Keep mining', primary: true, onClick: () => closeOverlay() },
@@ -1061,6 +1424,10 @@ export class PlayScene extends Phaser.Scene {
     });
   }
 
+  private reportMilestones(reached: { name: string; reward: number }[]): void {
+    for (const m of reached) hud.toast(`Milestone: ${m.name}. +${m.reward} Claims.`, 'good');
+  }
+
   private onKey(e: KeyboardEvent): void {
     if (e.repeat) return;
     const key = e.code === 'Space' ? 'SPACE' : e.code.startsWith('Shift') ? 'SHIFT' :
@@ -1068,6 +1435,12 @@ export class PlayScene extends Phaser.Scene {
     if (key === this.settings.bindings.mute) {
       const m = sfx.toggleMute();
       hud.toast(m ? 'Sound off' : 'Sound on', 'info');
+    } else if (this.modal) {
+      return;
+    } else if (key === this.settings.bindings.pulse) {
+      this.pulse();
+    } else if (key === this.settings.bindings.map) {
+      hud.cycleMap();
     } else if (key === this.settings.bindings.interact) {
       this.interact();
     } else if (key === this.settings.bindings.pause) {
@@ -1090,7 +1463,7 @@ export class PlayScene extends Phaser.Scene {
     if (p) {
       this.physics.world.pause();
       this.time.paused = true;
-      sfx.thrust(0);
+      sfx.quiet();
       showOverlay('PAUSED', 'Take a breath. The belt will wait.', [
         { label: 'Resume', primary: true, onClick: () => this.setPaused(false) },
         { label: 'Settings', onClick: () => showSettings(() => this.setPaused(true)) },
@@ -1104,7 +1477,7 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private toMenu(): void {
-    persist(this.save);
+    this.store();
     closeOverlay();
     this.time.paused = false;
     this.physics.world.resume();
@@ -1112,7 +1485,7 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private interact(): void {
-    if (this.paused || this.dead || this.warping) return;
+    if (this.paused || this.dead || this.warping || this.modal) return;
     if (this.docked) {
       this.launch();
       return;
@@ -1145,7 +1518,7 @@ export class PlayScene extends Phaser.Scene {
     const hadVoidSkin = this.save.unlockedSkins.includes('void');
     if (!recordDiscovery(this.save, site.id)) return;
     this.earn(site.reward);
-    persist(this.save);
+    this.store();
     const view = this.discoveryViews.get(site.id);
     view?.icon.setAlpha(0.42);
     view?.label.setText(site.name).setColor('#d0d0d0');
@@ -1157,7 +1530,7 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private gateOpen(): boolean {
-    return !this.sector.boss && campaignRequirementsMet(this.save);
+    return this.voyage.gateOpen();
   }
 
   private dock(): void {
@@ -1167,13 +1540,13 @@ export class PlayScene extends Phaser.Scene {
     b.setVelocity(0, 0);
     b.setAcceleration(0, 0);
     this.flame.setVisible(false);
-    sfx.thrust(0);
+    sfx.quiet();
     sfx.dock();
     hud.flare(0);
     hud.hint(null);
     this.autoDeliver();
     this.ensureDrones();
-    persist(this.save);
+    this.store();
     openShop(this.shopApi());
   }
 
@@ -1184,34 +1557,46 @@ export class PlayScene extends Phaser.Scene {
     this.physics.world.resume();
     sfx.undock();
     session.cargo = { ...this.cargo };
-    persist(this.save);
+    this.store();
   }
 
   private warp(): void {
     this.warping = true;
     sfx.warp();
-    sfx.thrust(0);
+    sfx.quiet();
     this.cameras.main.fadeOut(1000, 0, 0, 0);
     (this.player.body as Body).setVelocity(0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
+      if (this.voyage.run) {
+        this.voyage.clearDepth(this.cargo, this.hull);
+        this.scene.restart();
+        return;
+      }
       const completedSector = this.save.sector;
       this.save.sector += 1;
       this.save.sectorEarned = 0;
       refreshUnlocks(this.save);
       session.cargo = { ...this.cargo };
-      persist(this.save);
-      const objective = CAMPAIGN_OBJECTIVES[completedSector];
+      this.store();
+      const { objective } = this.voyage;
+      this.modal = true;
+      const rows: [string, string | number][] = [
+        ['Credits earned', money(this.sectorCredits)],
+        ['Asteroids broken', this.rocksBroken],
+        ['Pirates defeated', this.piratesDefeated],
+        ['Ore recovered', this.oreCollected],
+        ['Damage absorbed', Math.round(this.damageTaken)],
+        ['Hazard warnings', this.hazardWarnings],
+        ['Hull remaining', Math.max(0, Math.round(this.hull))],
+      ];
       showOverlay(
         'SECTOR DEBRIEF',
-        `Sector ${completedSector + 1}: ${this.sector.name}<br>
-         Credits earned: ${money(this.sectorCredits)} · Asteroids broken: ${this.rocksBroken}<br>
-         Pirates defeated: ${this.piratesDefeated} · Ore recovered: ${this.oreCollected} · Damage absorbed: ${Math.round(this.damageTaken)}<br>
-         Hazard warnings: ${this.hazardWarnings} · Hull remaining: ${Math.max(0, Math.round(this.hull))}<br>
-         Objective: ${objective.description} — COMPLETE`,
+        `Sector ${completedSector + 1}: ${this.sector.name}<br>Objective complete: ${objective.description}`,
         [
           { label: 'Continue', primary: true, onClick: () => this.scene.restart() },
           { label: 'Main menu', onClick: () => this.toMenu() },
         ],
+        `<dl class="tally">${rows.map(([name, value]) => `<dt>${name}</dt><dd>${value}</dd>`).join('')}</dl>`,
       );
     });
   }
@@ -1219,6 +1604,7 @@ export class PlayScene extends Phaser.Scene {
   private shopApi(): ShopApi {
     const api: ShopApi = {
       save: this.save,
+      info: () => this.voyage.info(),
       market: this.market,
       cargo: () => this.cargo,
       hull: () => this.hull,
@@ -1242,7 +1628,7 @@ export class PlayScene extends Phaser.Scene {
           this.earn(total);
           sfx.sell();
           hud.toast(`Sold ore for ${money(total)}`, 'good');
-          persist(this.save);
+          this.store();
         }
       },
       repair: () => this.service(true, false),
@@ -1256,7 +1642,7 @@ export class PlayScene extends Phaser.Scene {
           sfx.deny();
           return;
         }
-        this.stats = statsFor(this.save.levels, this.save.selectedPilot);
+        this.stats = this.voyage.stats();
         this.hull += this.stats.hullMax - oldHull;
         this.fuel += this.stats.fuelMax - oldFuel;
         this.shield += this.stats.shieldMax - oldShield;
@@ -1265,7 +1651,7 @@ export class PlayScene extends Phaser.Scene {
         sfx.buy();
         const u = UPGRADES.find((x) => x.id === id);
         hud.toast(`Installed: ${u?.name} level ${this.save.levels[id]}`, 'good');
-        persist(this.save);
+        this.store();
       },
       accept: (id) => {
         if (this.active.length >= 2) return;
@@ -1274,12 +1660,12 @@ export class PlayScene extends Phaser.Scene {
         const [c] = this.offers.splice(i, 1);
         c.deadline = this.clock + 240 + Math.random() * 120;
         this.active.push(c);
-        this.offers.push(makeContract(this.save.sector, this.clock, Math.random));
+        this.offers.push(makeContract(this.voyage.tier, this.clock, Math.random));
         sfx.buy();
       },
       deliver: () => this.autoDeliver(),
       refresh: () => {
-        this.offers = [0, 1, 2].map(() => makeContract(this.save.sector, this.clock, Math.random));
+        this.offers = [0, 1, 2].map(() => makeContract(this.voyage.tier, this.clock, Math.random));
       },
       launch: () => this.launch(),
     };
@@ -1288,7 +1674,7 @@ export class PlayScene extends Phaser.Scene {
 
   private service(repair: boolean, refuel: boolean): void {
     const s = this.save;
-    const sec = s.sector;
+    const sec = Math.min(this.voyage.threat, 8);
     if (repair) {
       const missing = Math.ceil(this.stats.hullMax - this.hull);
       if (missing > 0) {
@@ -1315,12 +1701,17 @@ export class PlayScene extends Phaser.Scene {
         } else sfx.deny();
       }
     }
-    persist(s);
+    this.store();
   }
 
   update(_time: number, delta: number): void {
     if (this.paused || this.warping) return;
     const dt = Math.min(delta / 1000, 0.05);
+    if (this.freeze > 0) {
+      this.freeze -= dt;
+      if (this.freeze <= 0 && !this.docked) this.physics.world.resume();
+      return;
+    }
     this.clock += dt;
     this.updateMarket(dt);
     this.updateBg();
@@ -1328,6 +1719,8 @@ export class PlayScene extends Phaser.Scene {
     const touchInteracting = this.touch.state.interacting;
     if (touchInteracting && !this.touchInteractHeld) this.interact();
     this.touchInteractHeld = touchInteracting;
+    if (this.touch.state.pulsing && !this.touchPulseHeld) this.pulse();
+    this.touchPulseHeld = this.touch.state.pulsing;
     if (this.docked) {
       this.updateHud();
       return;
@@ -1335,6 +1728,8 @@ export class PlayScene extends Phaser.Scene {
     this.t += dt;
     this.hitCd -= dt;
     this.pickupMsgCd -= dt;
+    this.pulseCd = Math.max(0, this.pulseCd - dt);
+    this.streak.update(dt);
     if (this.shield < this.stats.shieldMax) {
       this.shieldRecharge -= dt;
       if (this.shieldRecharge <= 0) this.shield = Math.min(this.stats.shieldMax, this.shield + 18 * dt);
@@ -1352,6 +1747,7 @@ export class PlayScene extends Phaser.Scene {
     this.updatePirates(dt);
     this.updateDrones(dt);
     this.updateTurret(dt);
+    this.updateEscort(dt);
     this.updateBoss(dt);
     this.updateHazards(dt);
     this.updateWells(dt);
@@ -1411,6 +1807,8 @@ export class PlayScene extends Phaser.Scene {
       this.fuel = Math.min(this.stats.fuelMax, this.fuel + this.stats.sprintRegen * dt);
     }
     sfx.thrust(thrusting ? 0.5 + (this.fuel > 0 ? 0.5 : 0) : 0);
+    const near = (o: { x: number; y: number }): boolean => Phaser.Math.Distance.Between(o.x, o.y, this.player.x, this.player.y) < 900;
+    sfx.combat(!this.dead && (this.boss !== null || (this.pirates.getChildren() as Pirate[]).some(near)));
 
     const ptr = this.input.activePointer;
     const shooting = ptr.leftButtonDown() || this.isActionDown('fire') || this.touch.state.firing;
@@ -1446,14 +1844,21 @@ export class PlayScene extends Phaser.Scene {
     const pv = (p.body as Body).velocity;
     const weapon = WEAPONS.find((candidate) => candidate.id === this.save.selectedWeapon) ?? WEAPONS[0];
     this.fireCd = this.stats.fireDelay * weapon.fireDelayMultiplier / 1000;
-    for (let i = 0; i < weapon.projectiles; i++) {
-      const centered = i - (weapon.projectiles - 1) / 2;
-      const ang = p.rotation + centered * weapon.spread + rnd(-0.025, 0.025);
+    const shots = weapon.projectiles + (this.voyage.has('twin') ? 1 : 0);
+    const spread = weapon.spread || 0.07;
+    for (let i = 0; i < shots; i++) {
+      const centered = i - (shots - 1) / 2;
+      const ang = p.rotation + centered * spread + rnd(-0.025, 0.025);
       const mx = p.x + Math.cos(ang) * 28;
       const my = p.y + Math.sin(ang) * 28;
       const b = this.bullets.create(mx, my, 'bullet') as Bullet;
       b.life = 0.85;
-      b.dmg = this.stats.damage * weapon.damageMultiplier;
+      const critical = this.voyage.has('critical') && Math.random() < 1 / 6;
+      b.dmg = this.stats.damage * weapon.damageMultiplier * (critical ? 3 : 1);
+      b.pierce = weapon.pierce + (this.voyage.has('pierce') ? 1 : 0);
+      b.push = weapon.knockback;
+      b.struck = new Set();
+      b.setScale(critical ? 1.5 : 1);
       b.setDepth(6);
       b.setRotation(ang);
       (b.body as Body).setCircle(4, 5, -1);
@@ -1475,7 +1880,25 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private updateRocks(dt: number): void {
-    for (const r of this.rocks.getChildren() as Rock[]) {
+    const view = this.cameras.main.worldView;
+    for (const r of [...(this.rocks.getChildren() as Rock[])]) {
+      if (r.kind === 'comet') {
+        r.life -= dt;
+        if (r.life <= 0) {
+          r.destroy();
+          continue;
+        }
+        this.burst(this.fxSpark, r.x, r.y, 1, 0xbfe8ff);
+      } else if (r.kind === 'crystal' && view.contains(r.x, r.y)) {
+        const a = r.rotation + r.weakAt;
+        const rim = (r.body as Body).halfWidth - 3;
+        const wx = r.x + Math.cos(a) * rim;
+        const wy = r.y + Math.sin(a) * rim;
+        this.threatGfx.fillStyle(0x9ff5ea, 0.35);
+        this.threatGfx.fillRect(wx - 11, wy - 11, 22, 22);
+        this.threatGfx.fillStyle(0xffffff, 1);
+        this.threatGfx.fillRect(wx - 5, wy - 5, 10, 10);
+      }
       const d = Phaser.Math.Distance.Between(r.x, r.y, this.cx, this.cy);
       if (d < 260) {
         const a = Phaser.Math.Angle.Between(this.cx, this.cy, r.x, r.y);
@@ -1486,6 +1909,15 @@ export class PlayScene extends Phaser.Scene {
     }
     // storm debris cleanup
     for (const d of [...(this.debris.getChildren() as Debris[])]) {
+      if (d.mine) {
+        d.life = (d.life ?? MINE_LIFE) - dt;
+        if (d.life <= 0) {
+          d.destroy();
+          continue;
+        }
+        // blinks once it is about to fizzle out
+        d.setAlpha(d.life < 3 && Math.floor(d.life * 6) % 2 ? 0.35 : 1);
+      }
       if (d.x < -300 || d.y < -300 || d.x > this.S + 300 || d.y > this.S + 300) d.destroy();
     }
   }
@@ -1503,7 +1935,7 @@ export class PlayScene extends Phaser.Scene {
       if (this.dead) continue;
       const d = Phaser.Math.Distance.Between(c.x, c.y, p.x, p.y);
       const b = c.body as Body;
-      const reach = this.stats.magnet + 260;
+      const reach = c.pulled ? Math.max(d + 1, this.stats.magnet + 260) : this.stats.magnet + 260;
       if (d < reach && space > 0) {
         // ore homes in on the ship: steer velocity toward it, faster when closer
         const a = Math.atan2(p.y - c.y, p.x - c.x);
@@ -1515,11 +1947,11 @@ export class PlayScene extends Phaser.Scene {
       if (d < 28) {
         if (space > 0) {
           this.cargo[c.ore] += 1;
-          recordDailyProgress(this.save, 'ore', 1);
+          this.voyage.daily('ore');
           this.oreCollected++;
-          recordCampaignProgress(this.save, 'ore');
+          this.voyage.record('ore');
           this.updateCampaignProgress();
-          sfx.pickup();
+          sfx.pickup(this.streak.count);
           this.burst(this.fxOre, c.x, c.y, 3, ORES[c.ore].color);
           c.destroy();
           return this.updateChunks(0);
@@ -1539,6 +1971,11 @@ export class PlayScene extends Phaser.Scene {
       const type = PIRATE_TYPES[pr.kind];
       pr.fireCd -= dt;
       pr.ramCd -= dt;
+      if (pr.elite === 'mending') pr.hp = Math.min(pr.max, pr.hp + pr.max * 0.04 * dt);
+      if (pr.kind === 'gunship') {
+        this.threatGfx.lineStyle(4, 0x8fd8ff, 0.75);
+        strokeArc(this.threatGfx, pr.x, pr.y, type.radius + 14, pr.rotation - SHIELD_ARC, SHIELD_ARC * 2);
+      }
       if (pr.mode === 'flee') {
         pr.fleeT -= dt;
         const away = tgtPlayer ? Phaser.Math.Angle.Between(p.x, p.y, pr.x, pr.y) : pr.rotation;
@@ -1549,6 +1986,10 @@ export class PlayScene extends Phaser.Scene {
           hud.toast('A pirate escaped with your ore.', 'bad');
           pr.destroy();
         }
+        continue;
+      }
+      if (pr.kind === 'scavenger') {
+        this.scavenge(pr, dt);
         continue;
       }
       let tx = 0;
@@ -1579,28 +2020,34 @@ export class PlayScene extends Phaser.Scene {
       }
       const dist = Phaser.Math.Distance.Between(pr.x, pr.y, tx, ty);
       const ang = Math.atan2(ty - pr.y, tx - pr.x);
-      pr.rotation = Phaser.Math.Angle.RotateTo(pr.rotation, ang, 4.5 * dt);
+      pr.rotation = Phaser.Math.Angle.RotateTo(pr.rotation, ang, type.turn * dt);
       let ax: number;
       let ay: number;
-      if (dist > 300) {
+      if (dist > type.keep + 110) {
         ax = Math.cos(ang) * 460 * type.accel;
         ay = Math.sin(ang) * 460 * type.accel;
       } else {
         const perp = ang + (Math.PI / 2) * pr.strafe;
-        const out = dist < 190 ? -1 : 0.2;
+        const out = dist < type.keep ? -1 : 0.2;
         ax = Math.cos(perp) * 330 * type.accel + Math.cos(ang) * 260 * out;
         ay = Math.sin(perp) * 330 * type.accel + Math.sin(ang) * 260 * out;
       }
       body.setAcceleration(ax, ay);
+      if (pr.kind === 'minelayer' && dist < 700 && pr.fireCd <= 0) {
+        pr.fireCd = type.fireDelay + Math.random();
+        this.dropMine(pr.x - Math.cos(pr.rotation) * 28, pr.y - Math.sin(pr.rotation) * 28);
+      }
       if (dist < type.range && pr.fireCd <= 0 && Math.abs(Phaser.Math.Angle.Wrap(ang - pr.rotation)) < 0.5) {
-        pr.fireCd = Math.max(0.65, type.fireDelay - 0.1 * this.save.sector) + Math.random() * 0.5;
-        this.enemyShot(
-          pr.x,
-          pr.y,
-          ang + rnd(-0.07, 0.07),
-          type.shotSpeed + 15 * this.save.sector,
-          type.shotDamage + 2 * this.save.sector,
-        );
+        pr.fireCd = Math.max(0.65, type.fireDelay - 0.1 * this.voyage.threat) + Math.random() * 0.5;
+        for (const offset of pr.elite === 'volley' ? [-0.18, 0, 0.18] : [0]) {
+          this.enemyShot(
+            pr.x,
+            pr.y,
+            ang + offset + rnd(-0.07, 0.07),
+            type.shotSpeed + 15 * Math.min(this.voyage.threat, 8),
+            type.shotDamage + 2 * Math.min(this.voyage.threat, 10),
+          );
+        }
       }
       if (isPlayer && dist < type.range && pr.fireCd > 0 && pr.fireCd < 0.28) {
         this.threatGfx.lineStyle(2, 0xff625d, 0.7);
@@ -1612,6 +2059,46 @@ export class PlayScene extends Phaser.Scene {
         this.hurtPlayer(6);
       }
     }
+  }
+
+  /** Races for loose ore, and runs once its hold is full. */
+  private scavenge(pr: Pirate, dt: number): void {
+    const type = PIRATE_TYPES[pr.kind];
+    const body = pr.body as Body;
+    let target: Chunk | null = null;
+    let nearest = 1400;
+    for (const c of this.chunks.getChildren() as Chunk[]) {
+      const d = Phaser.Math.Distance.Between(pr.x, pr.y, c.x, c.y);
+      if (d < nearest) {
+        nearest = d;
+        target = c;
+      }
+    }
+    // with nothing to take it shadows the ship and waits
+    const goal = target ?? this.player;
+    const ang = Math.atan2(goal.y - pr.y, goal.x - pr.x);
+    const push = !target && Phaser.Math.Distance.Between(pr.x, pr.y, goal.x, goal.y) < 380 ? -0.4 : 1;
+    pr.rotation = Phaser.Math.Angle.RotateTo(pr.rotation, ang, type.turn * dt);
+    body.setAcceleration(Math.cos(ang) * 460 * type.accel * push, Math.sin(ang) * 460 * type.accel * push);
+    if (!target || nearest >= 30) return;
+    pr.loot[target.ore] += 1;
+    target.destroy();
+    if (cargoTotal(pr.loot) >= SCAVENGER_LOAD) {
+      pr.mode = 'flee';
+      pr.fleeT = 9;
+      this.paintPirate(pr);
+      hud.toast('The scavenger is full and running. Stop it to get the ore.', 'bad');
+    }
+  }
+
+  private dropMine(x: number, y: number): void {
+    if ((this.debris.getChildren() as Debris[]).filter((d) => d.mine).length >= MAX_MINES) return;
+    const mine = this.debris.create(x, y, 'mine') as Debris;
+    mine.mine = true;
+    mine.life = MINE_LIFE;
+    mine.hp = 8;
+    mine.setDepth(3);
+    (mine.body as Body).setCircle(13, 4, 4);
   }
 
   private enemyShot(x: number, y: number, ang: number, speed: number, dmg: number): void {
@@ -1636,7 +2123,7 @@ export class PlayScene extends Phaser.Scene {
     }
     pr.mode = 'flee';
     pr.fleeT = 14;
-    pr.setTint(0xffd0a0);
+    this.paintPirate(pr);
     sfx.hurt();
     hud.hurt();
     this.shake(160, 0.007);
@@ -1695,7 +2182,8 @@ export class PlayScene extends Phaser.Scene {
     let best: Rock | null = null;
     let bestScore = Infinity;
     for (const r of this.rocks.getChildren() as Rock[]) {
-      if (Phaser.Math.Distance.Between(r.x, r.y, this.cx, this.cy) > 1600) continue;
+      // special rocks are left for you
+      if (r.kind !== 'plain' || Phaser.Math.Distance.Between(r.x, r.y, this.cx, this.cy) > 1600) continue;
       const score =
         Phaser.Math.Distance.Between(d.x, d.y, r.x, r.y) +
         (r.sz === 'L' ? 220 : 0) -
@@ -1733,6 +2221,9 @@ export class PlayScene extends Phaser.Scene {
       const b = this.bullets.create(this.cx + Math.cos(a) * 30, this.cy + Math.sin(a) * 30, 'tbullet') as Bullet;
       b.life = 0.95;
       b.dmg = this.stats.turretDamage;
+      b.pierce = 0;
+      b.push = 0;
+      b.struck = new Set();
       b.setDepth(6);
       b.setRotation(a);
       (b.body as Body).setCircle(4, 5, -1);
@@ -1741,8 +2232,54 @@ export class PlayScene extends Phaser.Scene {
     }
   }
 
+  /** The Gun Drone perk: it circles the ship and shoots the nearest pirate or boss. */
+  private updateEscort(dt: number): void {
+    const drone = this.escort;
+    if (!drone) return;
+    drone.setVisible(!this.dead);
+    if (this.dead) return;
+    const p = this.player;
+    const k = Math.min(1, 8 * dt);
+    drone.x += (p.x + Math.cos(this.t * 1.6) * 58 - drone.x) * k;
+    drone.y += (p.y + Math.sin(this.t * 1.6) * 58 - drone.y) * k;
+    this.escortCd -= dt;
+    let best: { x: number; y: number } | null = null;
+    let nearest = 520;
+    const targets = [...(this.pirates.getChildren() as Pirate[]), ...(this.boss ? [this.boss] : [])];
+    for (const target of targets) {
+      const d = Phaser.Math.Distance.Between(drone.x, drone.y, target.x, target.y);
+      if (d < nearest) {
+        nearest = d;
+        best = target;
+      }
+    }
+    if (!best) {
+      drone.rotation = p.rotation;
+      return;
+    }
+    const a = Math.atan2(best.y - drone.y, best.x - drone.x);
+    drone.rotation = a;
+    if (this.escortCd > 0) return;
+    this.escortCd = 0.7;
+    this.friendlyShot(drone.x, drone.y, a, this.stats.damage * 0.6);
+  }
+
+  private friendlyShot(x: number, y: number, ang: number, dmg: number): void {
+    const b = this.bullets.create(x + Math.cos(ang) * 30, y + Math.sin(ang) * 30, 'tbullet') as Bullet;
+    b.life = 0.95;
+    b.dmg = dmg;
+    b.pierce = 0;
+    b.push = 0;
+    b.struck = new Set();
+    b.setDepth(6);
+    b.setRotation(ang);
+    (b.body as Body).setCircle(4, 5, -1);
+    b.setVelocity(Math.cos(ang) * 820, Math.sin(ang) * 820);
+    sfx.turret();
+  }
+
   private updateBoss(dt: number): void {
-    if (this.sector.boss && !this.save.won && !this.boss && campaignRequirementsMet(this.save)) this.spawnBoss();
+    if (!this.boss && !this.bossSlain && this.voyage.bossDue()) this.spawnBoss();
     const b = this.boss;
     if (!b) return;
     const body = b.body as Body;
@@ -1807,7 +2344,7 @@ export class PlayScene extends Phaser.Scene {
       const inSafe = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.cx, this.cy) < SAFE_R;
       if (!inSafe && !this.dead && f.dmgCd <= 0) {
         f.dmgCd = 0.5;
-        this.hurtPlayer(3.5 + this.save.sector, true);
+        this.hurtPlayer(3.5 + Math.min(this.voyage.threat, 10), true);
         hud.hurt();
       }
       if (f.t <= 0) {
@@ -1841,6 +2378,10 @@ export class PlayScene extends Phaser.Scene {
       }
       if (s.t <= 0) {
         s.phase = 'idle';
+        if (!this.dead) {
+          this.voyage.record('storm');
+          this.updateCampaignProgress();
+        }
         this.nextStorm = this.t + this.sector.stormEvery * rnd(0.8, 1.2);
       }
     }
@@ -1848,7 +2389,7 @@ export class PlayScene extends Phaser.Scene {
     let msg: string | null = null;
     let kind: 'warn' | 'danger' | 'good' = 'warn';
     if (this.deadBanner) {
-      msg = 'SHIP LOST - RECOVERY IN PROGRESS';
+      msg = this.voyage.run ? 'SHIP LOST' : 'SHIP LOST - RECOVERY IN PROGRESS';
       kind = 'danger';
     } else if (f.phase === 'warn') {
       msg = `SOLAR FLARE IN ${Math.ceil(f.t)} - SHELTER AT THE STATION`;
@@ -1965,11 +2506,20 @@ export class PlayScene extends Phaser.Scene {
       this.nextPirate = this.sector.pirateEvery * rnd(0.75, 1.25);
       if (!this.dead && this.pirates.getChildren().length < this.sector.maxPirates) this.spawnPirate();
     }
+    if (this.voyage.threat >= 1 && !this.dead) {
+      this.nextComet -= dt;
+      if (this.nextComet <= 0) {
+        this.nextComet = COMET_EVERY * rnd(0.8, 1.4);
+        this.spawnComet();
+      }
+    }
     this.spawnTick += dt;
     if (this.spawnTick >= 2.5) {
       this.spawnTick = 0;
-      const rocks = this.rocks.getChildren().length;
-      if (rocks < this.sector.asteroids * 0.75) {
+      const field = this.rocks.getChildren() as Rock[];
+      // never leave a special rock objective with nothing to shoot
+      const short = this.wants('special') && field.filter((r) => r.kind !== 'plain').length < 3;
+      if (short || field.length < this.sector.asteroids * 0.75) {
         for (let i = 0; i < 12; i++) {
           const x = rnd(120, this.S - 120);
           const y = rnd(120, this.S - 120);
@@ -1978,7 +2528,9 @@ export class PlayScene extends Phaser.Scene {
           if (this.nearDiscovery(x, y, 150)) continue;
           if (this.wells.some((w) => Phaser.Math.Distance.Between(x, y, w.x, w.y) < 160)) continue;
           if (this.planets.some((p) => Phaser.Math.Distance.Between(x, y, p.x, p.y) < p.radius + 100)) continue;
-          this.spawnRock(x, y, 'L', pickWeighted(this.sector.weights, Math.random));
+          const sz: Sz = short ? 'M' : 'L';
+          const kind = short ? (['volatile', 'crystal', 'dense'] as const)[Math.floor(Math.random() * 3)] : this.newKind(sz);
+          this.spawnRock(x, y, sz, pickWeighted(this.sector.weights, Math.random), undefined, undefined, kind);
           break;
         }
       }
@@ -1988,7 +2540,7 @@ export class PlayScene extends Phaser.Scene {
   private updateStation(dt: number): void {
     this.station.rotation += 0.04 * dt;
     const open = this.gateOpen();
-    if (!this.sector.boss) {
+    if (this.voyage.hasGate) {
       this.gate.rotation += (open ? 0.5 : 0.05) * dt;
       this.gate.setTint(open ? 0xffffff : 0x59616b);
       this.gateGlow.setAlpha(open ? 0.22 + 0.1 * Math.sin(this.t * 4) : 0);
@@ -2004,13 +2556,15 @@ export class PlayScene extends Phaser.Scene {
     const dS = Phaser.Math.Distance.Between(p.x, p.y, this.cx, this.cy);
     const dG = Phaser.Math.Distance.Between(p.x, p.y, this.gx, this.gy);
     if (dS < DOCK_R) hud.hint(`${this.settings.bindings.interact} - Dock at station`);
-    else if (!this.sector.boss && dG < GATE_R + 60) {
-      if (this.gateOpen()) hud.hint(`${this.settings.bindings.interact} - Warp to ${SECTORS[this.save.sector + 1].name}`);
+    else if (this.voyage.hasGate && dG < GATE_R + 60) {
+      if (this.gateOpen()) hud.hint(`${this.settings.bindings.interact} - Warp to ${this.voyage.nextName()}`);
       else {
-        const objective = CAMPAIGN_OBJECTIVES[this.save.sector];
-        const requirement = campaignObjectiveComplete(this.save)
-          ? `Earn ${money(Math.max(0, this.sector.goal - this.save.sectorEarned))} more`
-          : `${objective.description} (${objectiveProgress(this.save)}/${objective.target})`;
+        const { mission, goal, earned, bossName } = this.voyage.info();
+        const requirement = !mission.complete
+          ? `${mission.description} (${mission.progress}/${mission.target})`
+          : earned < goal
+            ? `Earn ${money(goal - earned)} more`
+            : `Destroy the ${bossName}`;
         hud.hint(`Gate sealed - ${requirement}`);
       }
     } else {
@@ -2027,6 +2581,7 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private updateHud(): void {
+    const info = this.voyage.info();
     hud.update({
       hull: Math.max(0, this.hull),
       hullMax: this.stats.hullMax,
@@ -2037,21 +2592,18 @@ export class PlayScene extends Phaser.Scene {
       cargo: this.cargo,
       cargoMax: this.stats.cargoMax,
       money: this.save.money,
-      sector: this.save.sector,
-      earned: this.save.sectorEarned,
-      goal: this.sector.goal,
+      bossName: info.bossName,
+      hasGate: info.hasGate,
+      earned: info.earned,
+      goal: info.goal,
       contracts: this.active,
       clock: this.clock,
       market: this.market,
-      boss: this.boss ? { hp: Math.max(0, this.boss.hp), max: this.boss.max } : null,
-      mission: {
-        description: CAMPAIGN_OBJECTIVES[this.save.sector].description,
-        progress: objectiveProgress(this.save),
-        target: CAMPAIGN_OBJECTIVES[this.save.sector].target,
-        complete: campaignObjectiveComplete(this.save),
-      },
-      discoveries: this.save.discoveries.length,
+      boss: this.boss ? { hp: Math.max(0, this.boss.hp), max: this.boss.max, name: info.bossName ?? 'Boss' } : null,
+      mission: info.mission,
+      discoveries: this.voyage.home.discoveries.length,
       discoveryTotal: DISCOVERY_SITES.length,
+      pulse: { key: this.settings.bindings.pulse, wait: this.pulseCd },
     });
   }
 
@@ -2083,14 +2635,14 @@ export class PlayScene extends Phaser.Scene {
       c.arc(site.worldX * k, site.worldY * k, found ? 3 : 4, 0, Math.PI * 2);
       c.fill();
     }
-    c.fillStyle = '#6a625a';
     for (const r of this.rocks.getChildren() as Rock[]) {
-      const s = r.sz === 'L' ? 3 : r.sz === 'M' ? 2 : 1.2;
+      c.fillStyle = r.kind === 'plain' ? '#6a625a' : ROCK_MAP_COLOR[r.kind];
+      const s = r.kind !== 'plain' ? 3.5 : r.sz === 'L' ? 3 : r.sz === 'M' ? 2 : 1.2;
       c.fillRect(r.x * k - s / 2, r.y * k - s / 2, s, s);
     }
     c.fillStyle = '#e8832a';
     c.fillRect(this.cx * k - 4, this.cy * k - 4, 8, 8);
-    if (!this.sector.boss) {
+    if (this.voyage.hasGate) {
       c.strokeStyle = this.gateOpen() ? '#e8832a' : '#59616b';
       c.beginPath();
       c.arc(this.gx * k, this.gy * k, 4, 0, Math.PI * 2);

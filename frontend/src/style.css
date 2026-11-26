@@ -86,7 +86,7 @@ body {
 
 /* white text with the hard drop shadow Minecraft uses */
 #bar,
-#pricebar,
+#contracts,
 .toast,
 #banner,
 #hint,
@@ -200,62 +200,40 @@ button.x {
   position: absolute;
   inset: 0;
 }
+/* readouts let clicks through to the game, so you can aim and fire across them */
 .plate {
   background: var(--dark);
   border: 2px solid #000;
-  pointer-events: auto;
+}
+/* two side columns, so panels stack instead of landing on each other */
+#left,
+#right {
+  position: absolute;
+  top: calc(var(--u) * 10);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 6);
+}
+#left {
+  left: calc(var(--u) * 10);
+  width: calc(var(--u) * 296);
+  align-items: stretch;
+}
+#right {
+  right: calc(var(--u) * 10);
+  bottom: calc(var(--u) * 10);
+  align-items: flex-end;
 }
 #bar {
-  position: absolute;
-  left: calc(var(--u) * 10);
-  top: calc(var(--u) * 10);
-  width: calc(var(--u) * 330);
-  padding: 0.35em 0.7em 0.45em;
+  padding: 0.25em 0.6em 0.35em;
   display: grid;
   gap: 0.05em;
+  font-size: 0.85em;
 }
 .cash #money {
   color: var(--gold);
   font-size: 1.9em;
   line-height: 1;
-}
-#sector-name {
-  color: var(--ink);
-}
-
-/* price strip beside the stats plate */
-#pricebar {
-  position: absolute;
-  left: calc(var(--u) * 350);
-  right: calc(var(--u) * 10);
-  top: calc(var(--u) * 10);
-  height: calc(var(--u) * 84);
-  display: flex;
-  align-items: stretch;
-}
-#pricebar .pl {
-  display: grid;
-  place-items: center;
-  padding: 0 0.5em;
-  border-right: 2px solid #000;
-  color: var(--ink-dim);
-}
-#ticker {
-  flex: 1;
-  display: flex;
-  align-items: stretch;
-}
-.tk {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 0.3em;
-  padding: 0.2em 0.4em;
-  min-width: 0;
-  border-right: 2px solid #000;
-}
-.tk:last-child {
-  border-right: 0;
 }
 .oi {
   width: 1.5em;
@@ -267,29 +245,9 @@ button.x {
 .sw {
   margin-right: 0.5em;
 }
-.tk span {
-  color: var(--ink);
-}
-.tk .oi {
-  width: 1.25em;
-}
-.tk b {
-  margin-left: auto;
-  font-size: 1.3em;
-  font-weight: 400;
-  color: var(--gold);
-  white-space: nowrap;
-}
-.tk em,
 td em {
   font-style: normal;
   color: var(--ink-dim);
-}
-.tk em.up {
-  color: #6fd65a;
-}
-.tk em.down {
-  color: #ff6b6b;
 }
 td em.up {
   color: #7ae860;
@@ -297,55 +255,18 @@ td em.up {
 td em.down {
   color: #ff7b7b;
 }
-.tk em {
-  white-space: nowrap;
-}
-.tk em::before {
-  content: '- ';
-}
-.tk em.up::before {
-  content: '+ ';
-  content: '\25B2 ';
-}
-.tk em.down::before {
-  content: '\25BC ';
-}
-.tk.ev span {
-  color: var(--gold);
-}
-.evt {
-  align-self: center;
-  margin: 0 0.6em;
-  padding: 0.1em 0.7em;
-  background: var(--gold);
-  color: #2a1c00;
-  text-shadow: none;
-}
-
-/* ---- right column ---- */
-.win.contracts {
-  position: absolute;
-  right: calc(var(--u) * 10);
-  top: calc(var(--u) * 126);
-  width: calc(var(--u) * 270);
-}
-.win.contracts .wb {
-  padding: 0;
-}
+/* ---- right column: contracts above, map below ---- */
 #contracts {
-  background: var(--slot-dk);
   color: var(--ink);
-  margin: 0 3px 3px;
-  min-height: calc(var(--u) * 34);
-  border: 2px solid;
-  border-color: #1a1a1a #fff #fff #1a1a1a;
+  font-size: 0.8em;
+  padding: 0.1em 0;
 }
 .ct {
   display: grid;
   grid-template-columns: 1fr auto auto;
   gap: 0.8em;
-  padding: 0.25em 0.6em;
-  text-shadow: 2px 2px 0 #1a1a1a;
+  padding: 0.1em 0.6em;
+  font-variant-numeric: tabular-nums;
 }
 .ct span {
   color: var(--gold);
@@ -371,21 +292,35 @@ td em.down {
 .keys.fade {
   opacity: 0;
 }
-.win.mapwin {
-  position: absolute;
-  right: calc(var(--u) * 10);
-  bottom: calc(var(--u) * 10);
-  padding: 3px;
+#mapwin {
+  margin-top: auto;
+  display: grid;
+  justify-items: end;
+  gap: calc(var(--u) * 3);
 }
-.win.mapwin .wt {
+.maptools {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 0.3em;
+  gap: calc(var(--u) * 3);
 }
-.win.mapwin .wt button {
-  padding: 0.1em 0.35em;
-  font-size: 0.65em;
+.maptools button {
+  padding: 0 0.45em 0.1em;
+  font-size: 0.7em;
+}
+#minimap {
+  display: block;
+  width: calc(var(--u) * 132);
+  height: calc(var(--u) * 132);
+  background: #000;
+  border: 2px solid #000;
+  opacity: 0.85;
+}
+#mapwin[data-size='large'] #minimap {
+  width: calc(var(--u) * 270);
+  height: calc(var(--u) * 270);
+  opacity: 1;
+}
+#mapwin[data-size='hidden'] #minimap {
+  display: none;
 }
 .discovery-log {
   max-height: 48vh;
@@ -403,23 +338,10 @@ td em.down {
 .discovery-log li.unknown {
   color: #9da2a8;
 }
-.win.mapwin canvas {
-  display: block;
-  width: calc(var(--u) * 180);
-  height: calc(var(--u) * 180);
-  background: #000;
-}
-.map-legend {
-  max-width: calc(var(--u) * 180);
-  padding: 0.2em;
-  color: #d8d8d8;
-  font-size: 0.58em;
-  line-height: 1.2;
-}
 #banner {
   position: absolute;
   left: 50%;
-  top: calc(var(--u) * 180);
+  top: calc(var(--u) * 70);
   transform: translateX(-50%);
   padding: 0.2em 1.2em 0.3em;
   font-size: 1.4em;
@@ -438,7 +360,7 @@ td em.down {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  top: calc(var(--u) * 126);
+  top: calc(var(--u) * 10);
   width: calc(var(--u) * 460);
   color: #ff8d8d;
   text-align: center;
@@ -450,12 +372,9 @@ td em.down {
   background-color: #c24848;
 }
 #toasts {
-  position: absolute;
-  left: calc(var(--u) * 10);
-  top: calc(var(--u) * 126);
   display: grid;
   gap: 3px;
-  width: calc(var(--u) * 330);
+  font-size: 0.8em;
 }
 .toast {
   background: var(--dark);
@@ -507,7 +426,7 @@ td em.down {
   left: 50%;
   bottom: calc(var(--u) * 10);
   transform: translateX(-50%);
-  width: calc(var(--u) * 9 * 64 + var(--u) * 4);
+  width: calc(var(--u) * 440);
 }
 .vitals {
   display: flex;
@@ -541,16 +460,37 @@ td em.down {
 .xp.shield i {
   background: #56b9e8;
 }
+.hold {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: calc(var(--u) * 8);
+}
 #hotbar {
   display: flex;
   background: #000;
   padding: 2px;
-  pointer-events: auto;
+}
+#v-pulse,
+#v-cargo {
+  min-width: 4.5em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 2px 2px 0 var(--shadow);
+}
+#v-cargo.full {
+  color: #ff8d8d;
+}
+#v-pulse {
+  text-align: right;
+  color: #8fd8ff;
+}
+#v-pulse.cooling {
+  color: #9aa4ad;
 }
 .slot {
   position: relative;
-  width: calc(var(--u) * 64);
-  height: calc(var(--u) * 64);
+  width: calc(var(--u) * 50);
+  height: calc(var(--u) * 50);
   background: var(--slot);
   border: 3px solid;
   border-color: #373737 #fff #fff #373737;
@@ -559,7 +499,7 @@ td em.down {
   margin-right: 0;
 }
 .slot .ic {
-  width: calc(var(--u) * 42);
+  width: calc(var(--u) * 32);
   height: auto;
   opacity: 0.3;
   filter: grayscale(1);
@@ -572,7 +512,7 @@ td em.down {
   position: absolute;
   right: 3px;
   bottom: -1px;
-  font-size: 1.6em;
+  font-size: 1.25em;
   color: #fff;
 }
 .slot .n:empty {
@@ -593,6 +533,9 @@ td em.down {
 }
 .card {
   width: calc(var(--u) * 460);
+  max-height: 94cqh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .card p {
   margin: 0 0 1em;
@@ -602,6 +545,59 @@ td em.down {
   display: flex;
   gap: 0.7em;
   flex-wrap: wrap;
+}
+
+.perks {
+  display: grid;
+  gap: 0.5em;
+  margin-bottom: 1em;
+}
+.perks button {
+  display: grid;
+  gap: 0.15em;
+  padding: 0.45em 0.8em 0.55em;
+  text-align: left;
+  line-height: 1.15;
+}
+.perks b {
+  font-weight: 400;
+  font-size: 1.2em;
+}
+.tally {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.2em 1em;
+  margin: 0 0 1em;
+  font-variant-numeric: tabular-nums;
+}
+.tally dd {
+  margin: 0;
+  text-align: right;
+}
+.menu-play button + button {
+  margin-top: 0.4em;
+  font-size: 1.2em;
+}
+.claims {
+  margin: 0 0 0.7em;
+  font-size: 1.6em;
+  color: #000;
+  font-variant-numeric: tabular-nums;
+}
+.wide {
+  width: 100%;
+  font-size: 1.3em;
+}
+.menu .daily-panel + .sub-h,
+.menu .tally + .sub-h {
+  margin-top: 1em;
+}
+.tally small {
+  color: #555;
+}
+.menu .daily-quest button {
+  min-width: 4.5em;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- menu ---- */
@@ -643,6 +639,9 @@ td em.down {
   font-size: 1.05em;
   margin: 0.25em 0 1.1em;
 }
+.menu h1 + .menu-play {
+  margin-top: 0.8em;
+}
 .menu-play button {
   width: 100%;
   font-size: 1.5em;
@@ -677,6 +676,12 @@ td em.down {
   margin-top: 1em;
   padding-top: 1em;
   border-top: 2px solid var(--lo);
+}
+.menu-nav:has(button:nth-child(6)) {
+  grid-template-columns: repeat(3, 1fr);
+}
+.menu-nav:has(button:nth-child(6)) button {
+  padding-inline: 0.2em;
 }
 .menu-nav button:last-child:nth-child(odd) {
   grid-column: 1 / -1;
@@ -913,18 +918,16 @@ td em.down {
   #touch-controls {
     display: block;
   }
-  #bar {
-    width: calc(var(--u) * 250);
-  }
-  .win.contracts {
-    width: calc(var(--u) * 220);
-  }
-  #pricebar {
-    left: calc(var(--u) * 265);
-  }
-  #ticker .tk span,
-  #ticker .tk em {
+  .keyhint {
     display: none;
+  }
+  /* the sticks own the bottom corners, so the map moves up */
+  #right {
+    bottom: auto;
+  }
+  #mapwin {
+    order: -1;
+    margin-top: 0;
   }
   .keys {
     display: none;

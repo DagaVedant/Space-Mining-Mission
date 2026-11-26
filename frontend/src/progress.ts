@@ -8,19 +8,23 @@ import {
   DISCOVERY_SITES,
   DISCOVERY_SKIN_UNLOCK_AT,
   UPGRADES,
+  UPGRADE_GROWTH,
+  type ObjectiveMetric,
   type OreId,
   type PilotId,
   type ShipSkinId,
   type WeaponId,
   type UpgradeId,
 } from './data';
+import { newCompany, normalizeCompany, type CompanyState } from './company';
 import { mulberry32, type Rng } from './rng';
+import { normalizeRun, type RunState } from './run';
 
 export type Levels = Record<UpgradeId, number>;
 export type Cargo = Record<OreId, number>;
 
 export interface SaveData {
-  v: 4;
+  v: 5;
   money: number;
   lifetime: number;
   sector: number;
@@ -38,6 +42,9 @@ export interface SaveData {
   objectiveProgress: number[];
   completedObjectives: number[];
   discoveries: string[];
+  /** Permanent expedition progress. A new campaign keeps it. */
+  company: CompanyState;
+  run: RunState | null;
   updatedAt: number;
 }
 
@@ -91,7 +98,7 @@ export function newSave(): SaveData {
   for (const u of UPGRADES) levels[u.id] = 0;
   const date = utcDate();
   const save: SaveData = {
-    v: 4,
+    v: 5,
     money: 60,
     lifetime: 0,
     sector: 0,
@@ -109,6 +116,8 @@ export function newSave(): SaveData {
     objectiveProgress: Array.from({ length: SECTORS.length }, () => 0),
     completedObjectives: [],
     discoveries: [],
+    company: newCompany(),
+    run: null,
     updatedAt: Date.now(),
   };
   refreshUnlocks(save);
@@ -161,7 +170,7 @@ export function statsFor(l: Levels, pilotId: PilotId = 'prospector'): ShipStats 
 export function upgradeCost(id: UpgradeId, level: number): number {
   const u = UPGRADES.find((x) => x.id === id);
   if (!u) throw new Error(`unknown upgrade ${id}`);
-  return Math.round((u.baseCost * Math.pow(u.growth, level)) / 5) * 5;
+  return Math.round((u.baseCost * Math.pow(UPGRADE_GROWTH, level)) / 5) * 5;
 }
 
 export function canBuyUpgrade(save: SaveData, id: UpgradeId): boolean {
@@ -214,7 +223,7 @@ export function campaignRequirementsMet(save: SaveData): boolean {
   return sectorGoalReached(save) && campaignObjectiveComplete(save);
 }
 
-export function recordCampaignProgress(save: SaveData, metric: 'ore' | 'pirates', amount = 1): boolean {
+export function recordCampaignProgress(save: SaveData, metric: ObjectiveMetric, amount = 1): boolean {
   const objective = CAMPAIGN_OBJECTIVES[save.sector];
   if (objective.metric !== metric || !Number.isFinite(amount) || amount <= 0 || campaignObjectiveComplete(save)) return false;
   save.objectiveProgress[save.sector] = (save.objectiveProgress[save.sector] ?? 0) + amount;
@@ -336,7 +345,7 @@ export function normalizeSave(value: unknown): SaveData | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const data = value as Record<string, unknown>;
   const version = data.v;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4) return null;
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5) return null;
   const base = newSave();
   const sector = typeof data.sector === 'number' && Number.isInteger(data.sector)
     ? Math.min(SECTORS.length - 1, Math.max(0, data.sector))
@@ -412,11 +421,18 @@ export function normalizeSave(value: unknown): SaveData | null {
     objectiveProgress: objectiveProgressBySector,
     completedObjectives: uniqueCompletedObjectives,
     discoveries,
+    company: normalizeCompany(data.company),
+    run: normalizeRun(data.run),
     updatedAt: version >= 2 && typeof data.updatedAt === 'number' && Number.isFinite(data.updatedAt) ? data.updatedAt : 0,
-    v: 4,
+    v: 5,
   };
   refreshUnlocks(save);
   return save;
+}
+
+export function expeditionsUnlocked(save: SaveData): boolean {
+  // once earned it stays, even through a new campaign
+  return save.sector >= 2 || save.won || save.run !== null || save.company.stats.runs > 0;
 }
 
 export function loadSave(): SaveData | null {
@@ -438,7 +454,7 @@ export function loadSave(): SaveData | null {
 
 export function persist(save: SaveData, sync = true, touch = true): void {
   try {
-    save.v = 4;
+    save.v = 5;
     if (touch) save.updatedAt = Date.now();
     localStorage.setItem(KEY, JSON.stringify(save));
     localStorage.removeItem(LEGACY_KEY);

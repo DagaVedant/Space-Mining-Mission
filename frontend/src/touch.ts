@@ -5,6 +5,7 @@ export interface TouchState {
   firing: boolean;
   boosting: boolean;
   interacting: boolean;
+  pulsing: boolean;
 }
 
 export interface TouchControls {
@@ -23,6 +24,7 @@ export function mountTouchControls(): TouchControls {
       <span class="stick-knob"></span><b>MOVE</b>
     </div>
     <div class="touch-actions">
+      <button type="button" data-touch="pulse" aria-label="Fire pulse">PULSE</button>
       <button type="button" data-touch="boost" aria-label="Hold to boost">BOOST</button>
       <button type="button" data-touch="interact" aria-label="Dock or interact">DOCK</button>
     </div>
@@ -30,7 +32,7 @@ export function mountTouchControls(): TouchControls {
       <span class="stick-knob"></span><b>AIM / FIRE</b>
     </div>`;
   root.appendChild(panel);
-  const state: TouchState = { moveX: 0, moveY: 0, aim: null, firing: false, boosting: false, interacting: false };
+  const state: TouchState = { moveX: 0, moveY: 0, aim: null, firing: false, boosting: false, interacting: false, pulsing: false };
   const active = new Map<number, { pad: HTMLElement; kind: 'move' | 'aim' }>();
   const listeners: Array<[HTMLElement, string, EventListener]> = [];
   const listen = (element: HTMLElement, type: string, handler: EventListener): void => {
@@ -91,6 +93,7 @@ export function mountTouchControls(): TouchControls {
     const set = (value: boolean): void => {
       if (action === 'boost') state.boosting = value;
       if (action === 'interact') state.interacting = value;
+      if (action === 'pulse') state.pulsing = value;
     };
     listen(button, 'pointerdown', ((event: PointerEvent) => {
       event.preventDefault();

@@ -8,6 +8,8 @@ class Sfx {
   private thrustGain!: GainNode;
   private noiseBuf!: AudioBuffer;
   private ambientOn = false;
+  private combatGain: GainNode | null = null;
+  private fighting = false;
   private volume = 0.55;
   muted = false;
 
@@ -96,6 +98,19 @@ class Sfx {
     this.thrustGain.gain.setTargetAtTime(level * 0.16, this.ctx.currentTime, 0.08);
   }
 
+  /** Brings the pulsing combat layer in or out under the ambient bed. */
+  combat(on: boolean): void {
+    if (!this.ctx || !this.combatGain || on === this.fighting) return;
+    this.fighting = on;
+    this.combatGain.gain.setTargetAtTime(on ? 0.07 : 0, this.ctx.currentTime, on ? 0.4 : 1.2);
+  }
+
+  /** Silences everything that follows what the ship is doing. */
+  quiet(): void {
+    this.thrust(0);
+    this.combat(false);
+  }
+
   shoot(): void {
     this.tone(880, 0.09, 'square', 0.05, 220);
     this.noise(0.05, 0.05, 3000, 800, 'highpass');
@@ -111,8 +126,14 @@ class Sfx {
     this.noise(0.35 * k + 0.1, 0.35 * k, 1400, 120);
     this.tone(120 * (2 - k), 0.25, 'triangle', 0.18 * k, 40);
   }
-  pickup(): void {
-    this.tone(760, 0.07, 'triangle', 0.08, 1100);
+  pulse(): void {
+    this.tone(180, 0.35, 'sine', 0.2, 720);
+    this.noise(0.3, 0.18, 400, 2600, 'bandpass');
+  }
+  /** `step` raises the pitch a semitone at a time while a streak holds. */
+  pickup(step = 0): void {
+    const k = 2 ** (Math.min(step, 12) / 12);
+    this.tone(760 * k, 0.07, 'triangle', 0.08, 1100 * k);
   }
   sell(): void {
     this.tone(660, 0.08, 'triangle', 0.1);
@@ -161,6 +182,32 @@ class Sfx {
     this.noise(1.2, 0.35, 300, 3000, 'bandpass');
   }
 
+  /** A low two-note drone chopped into a beat; silent until there is a fight. */
+  private startCombatLayer(ctx: AudioContext): void {
+    this.combatGain = ctx.createGain();
+    this.combatGain.gain.value = 0;
+    const beat = ctx.createGain();
+    beat.gain.value = 0.5;
+    const lfo = ctx.createOscillator();
+    lfo.type = 'square';
+    lfo.frequency.value = 3.6;
+    const depth = ctx.createGain();
+    depth.gain.value = 0.5;
+    lfo.connect(depth).connect(beat.gain);
+    lfo.start();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 420;
+    for (const f of [82.4, 123.5]) {
+      const o = ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.value = f;
+      o.connect(lp);
+      o.start();
+    }
+    lp.connect(beat).connect(this.combatGain).connect(this.master);
+  }
+
   private startAmbient(): void {
     const ctx = this.ctx;
     if (!ctx || this.ambientOn) return;
@@ -184,6 +231,7 @@ class Sfx {
     lfo.connect(lfoGain).connect(lp.frequency);
     lfo.start();
     lp.connect(bed).connect(this.master);
+    this.startCombatLayer(ctx);
     const notes = [220, 261.63, 293.66, 349.23, 392, 440];
     const pluck = () => {
       if (!this.ctx) return;
