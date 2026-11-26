@@ -46,16 +46,14 @@ Stack: Phaser 3, TypeScript, Vite, Vitest. Asteroids, hazards, effects and envir
 
 The backend provides account authentication, versioned cloud saves, casual and ranked PvP matchmaking, authoritative 1v1 combat, seasonal ratings, a leaderboard, and persistent PvP records. The frontend keeps localStorage saves for offline play and migrates existing v1-v4 saves to v5; signed-in saves sync with the backend. Deploy the backend before (or with) a frontend that writes a new save version, and note that a tab still running an older build cannot read a newer cloud save until it is reloaded.
 
+It is written in Java 21 with Spring Boot and needs Postgres. With Docker, nothing else has to be installed:
+
 ```sh
 cd backend
-npm ci
-cp .env.example .env
-npm run check
-npm test
-npm run dev
+docker compose up --build
 ```
 
-Locally the backend uses an embedded Postgres in `backend/data`, so no database setup is needed.
+[`backend/README.md`](backend/README.md) covers running without Docker, tests and configuration. The earlier Node version is kept on the `node-backend` branch.
 
 ### Deploying on Render
 

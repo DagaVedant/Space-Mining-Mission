@@ -2,16 +2,12 @@
 services:
   - type: web
     name: asteroid-breaker-api
-    runtime: node
+    runtime: docker
     plan: free
     region: virginia
     rootDir: backend
-    buildCommand: npm ci
-    startCommand: npm start
     healthCheckPath: /api/health
     envVars:
-      - key: NODE_VERSION
-        value: "24"
       - key: ALLOWED_ORIGINS
         value: https://dagavedant.github.io
       - key: DATABASE_URL
