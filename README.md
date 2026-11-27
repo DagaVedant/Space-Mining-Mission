@@ -57,9 +57,11 @@ docker compose up --build
 
 ### Deploying on Render
 
-[`render.yaml`](render.yaml) describes the web service and its Postgres database. In the Render dashboard choose New, then Blueprint, and pick this repository. Pushes to `main` redeploy it.
+[`render.yaml`](render.yaml) describes the web service. In the Render dashboard choose New, then Blueprint, pick this repository and enter `DATABASE_URL` when asked. Pushes to `main` redeploy it.
 
-On the free plan the service sleeps after 15 idle minutes (the next request takes about a minute), and the database expires 30 days after it is created unless upgraded.
+The database is Postgres on [Neon](https://neon.com), created through the Vercel Marketplace (resource `asteroid-breaker-db`). Use its unpooled connection string. The free plan limits monthly compute hours.
+
+On Render's free plan the service sleeps after 15 idle minutes, and the next request takes about a minute.
 
 It can also run on any persistent host with `docker compose -f backend/compose.yaml up --build`.
 
